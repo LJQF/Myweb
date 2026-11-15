@@ -1,0 +1,424 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#f6f9fc" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0b1220" media="(prefers-color-scheme: dark)">
+<title>联机象棋 · 小站</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23b3261e'/%3E%3Ctext x='32' y='45' font-size='34' font-family='serif' font-weight='bold' text-anchor='middle' fill='%23fff'%3E车%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="css/site.css">
+<style>
+  .view { animation: fadein .28s ease-out both; }
+
+  /* 大厅内容整体居中 */
+  #view-lobby {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    min-height: calc(100vh - 260px);
+  }
+
+  #view-lobby[hidden] { display: none; }
+
+  @keyframes fadein { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+
+  /* ---------------- 大厅 ---------------- */
+  .hero { text-align: center; margin: 0 0 clamp(24px, 4vh, 40px); }
+  .hero h1 { margin: 0 0 10px; font-size: clamp(28px, 5.6vw, 42px); font-weight: 700; letter-spacing: -.01em; }
+  .hero p { margin: 0; color: var(--muted); font-size: clamp(13.5px, 2.4vw, 15px); }
+
+  .modes {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 14px;
+    max-width: 820px;
+    margin: 0 auto;
+  }
+
+  .mode {
+    position: relative;
+    text-align: left;
+    padding: 24px 22px;
+    border-radius: 20px;
+    border: 1px solid var(--line);
+    background: var(--surface);
+    -webkit-backdrop-filter: saturate(180%) blur(18px);
+    backdrop-filter: saturate(180%) blur(18px);
+    box-shadow: var(--shadow);
+    color: var(--ink);
+    font: inherit;
+    cursor: pointer;
+    overflow: hidden;
+    transition: transform .2s cubic-bezier(.2,.8,.25,1), border-color .2s ease, box-shadow .2s ease;
+  }
+
+  .mode:hover { transform: translateY(-3px); border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
+  .mode:active { transform: translateY(-1px) scale(.995); }
+
+  .mode-num {
+    position: absolute;
+    right: 18px;
+    top: 14px;
+    font-size: 34px;
+    font-weight: 800;
+    color: var(--ink);
+    opacity: .07;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .mode h3 { margin: 0 0 6px; font-size: 17px; font-weight: 650; }
+  .mode p { margin: 0; font-size: 13px; color: var(--muted); line-height: 1.6; }
+
+  .link {
+    display: block;
+    margin: 26px auto 0;
+    background: none;
+    border: 0;
+    color: var(--muted);
+    font: inherit;
+    font-size: 13px;
+    cursor: pointer;
+    text-decoration: underline;
+    text-underline-offset: 4px;
+    text-decoration-style: dashed;
+  }
+
+  .link:hover { color: var(--accent); }
+
+  /* ---------------- 房间码 ---------------- */
+  #view-code, #view-join { text-align: center; max-width: 520px; margin: 0 auto; padding-top: clamp(20px, 8vh, 72px); }
+  #view-code h2, #view-join h2 { font-size: clamp(18px, 3.4vw, 22px); font-weight: 600; color: var(--muted); margin: 0 0 22px; }
+
+  .code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: clamp(38px, 11vw, 62px);
+    font-weight: 700;
+    letter-spacing: .12em;
+    padding: 18px 0 18px .12em;
+    border-radius: 18px;
+    background: var(--surface-solid);
+    border: 1px dashed color-mix(in srgb, var(--accent) 45%, transparent);
+    color: var(--accent);
+    box-shadow: var(--shadow);
+    user-select: all;
+  }
+
+  .code-input {
+    width: 100%;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: clamp(30px, 8vw, 46px);
+    font-weight: 700;
+    letter-spacing: .1em;
+    text-align: center;
+    padding: 16px 10px;
+    border-radius: 18px;
+    border: 1px solid var(--line);
+    background: var(--surface-solid);
+    color: var(--ink);
+    box-shadow: var(--shadow);
+  }
+
+  .code-input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft); }
+  .code-input::placeholder { color: var(--muted); opacity: .35; }
+
+  .code-actions { display: flex; gap: 10px; justify-content: center; margin-top: 20px; flex-wrap: wrap; }
+
+  .waiting {
+    margin-top: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    color: var(--muted);
+    font-size: 13.5px;
+  }
+
+  .pulse {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--accent);
+    animation: pulse 1.2s ease-in-out infinite;
+  }
+
+  @keyframes pulse { 0%,100% { opacity: .25; transform: scale(.8); } 50% { opacity: 1; transform: scale(1.15); } }
+
+  .err { min-height: 20px; margin: 12px 0 0; color: #ef4444; font-size: 13px; }
+
+  /* ---------------- 棋盘 ---------------- */
+  .game { display: flex; flex-direction: column; align-items: center; gap: 12px; }
+
+  .game-head {
+    width: min(92vw, 520px);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .turn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 15px;
+    font-weight: 600;
+    padding: 8px 14px;
+    border-radius: 999px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    box-shadow: var(--shadow-sm);
+  }
+
+  .turn .dot { width: 10px; height: 10px; border-radius: 50%; background: #b3261e; transition: background .2s ease; }
+  .turn .dot.black { background: #1f2933; }
+  .turn .dot.over { background: var(--muted); }
+
+  .side { font-size: 12.5px; color: var(--muted); }
+
+  .board {
+    position: relative;
+    width: min(92vw, 520px);
+    aspect-ratio: 9 / 10;
+    border-radius: 12px;
+    background: linear-gradient(150deg, #f7e8cb 0%, #f0dcbb 55%, #e9d2ac 100%);
+    box-shadow: 0 24px 60px -30px rgba(60, 40, 10, .75), inset 0 0 0 1px rgba(120, 80, 30, .28);
+    touch-action: manipulation;
+    overflow: hidden;
+  }
+
+  .board.locked { cursor: not-allowed; }
+
+  .lines { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+
+  .marks, .pieces { position: absolute; inset: 0; }
+
+  .mark {
+    position: absolute;
+    width: calc(100% / 9);
+    height: 10%;
+    display: grid;
+    place-items: center;
+    pointer-events: none;
+  }
+
+  .mark.dot::after {
+    content: "";
+    width: 26%;
+    aspect-ratio: 1;
+    border-radius: 50%;
+    background: rgba(20, 90, 45, .5);
+  }
+
+  .mark.cap::after {
+    content: "";
+    width: 82%;
+    aspect-ratio: 1;
+    border-radius: 50%;
+    border: 3px solid rgba(200, 40, 40, .6);
+  }
+
+  .mark.last::after {
+    content: "";
+    width: 64%;
+    aspect-ratio: 1;
+    border-radius: 10px;
+    background: rgba(235, 180, 40, .38);
+  }
+
+  .piece {
+    position: absolute;
+    width: calc(100% / 9);
+    height: 10%;
+    display: grid;
+    place-items: center;
+    cursor: pointer;
+    z-index: 2;
+  }
+
+  .piece .disc {
+    width: 86%;
+    aspect-ratio: 1;
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    font-family: "Kaiti SC", "STKaiti", KaiTi, "Songti SC", "SimSun", serif;
+    font-size: calc(var(--cell, 52px) * 0.5);
+    font-weight: 700;
+    line-height: 1;
+    color: #b3261e;
+    background: radial-gradient(circle at 34% 26%, #fffdf3 0%, #f8ecd2 52%, #e7d2ac 100%);
+    border: 1.5px solid #c9a15f;
+    box-shadow: 0 3px 6px rgba(90, 60, 20, .32), inset 0 -2px 4px rgba(150, 110, 60, .22), inset 0 2px 3px rgba(255, 255, 255, .95);
+    transition: transform .12s ease, box-shadow .12s ease;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  .piece.black .disc { color: #1f2933; }
+
+  .piece:hover .disc { transform: translateY(-1px); }
+
+  .piece.sel .disc {
+    box-shadow: 0 0 0 3px #2563eb, 0 0 0 6px rgba(37, 99, 235, .22), 0 4px 8px rgba(0, 0, 0, .3);
+    transform: translateY(-2px);
+  }
+
+  .piece.moved .disc { animation: land .3s cubic-bezier(.2,.8,.3,1); }
+
+  @keyframes land {
+    0% { transform: scale(1.16); }
+    100% { transform: scale(1); }
+  }
+
+  .game-actions { display: flex; gap: 10px; }
+
+  /* ---------------- 结果 / 提示 ---------------- */
+  .result {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    background: rgba(20, 14, 4, .55);
+    -webkit-backdrop-filter: blur(3px);
+    backdrop-filter: blur(3px);
+    z-index: 5;
+    animation: fadein .25s ease-out both;
+  }
+
+  .result[hidden] { display: none; }
+
+  .result-card {
+    background: var(--surface-solid);
+    color: var(--ink);
+    border-radius: 18px;
+    padding: 26px 30px;
+    text-align: center;
+    box-shadow: 0 30px 60px -20px rgba(0, 0, 0, .6);
+    max-width: 84%;
+  }
+
+  .result-card h3 { margin: 0 0 6px; font-size: 24px; font-weight: 750; }
+  .result-card p { margin: 0 0 18px; color: var(--muted); font-size: 13px; }
+  .result-card .row { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+
+  .toast {
+    position: fixed;
+    left: 50%;
+    bottom: 32px;
+    transform: translateX(-50%);
+    background: rgba(15, 23, 42, .92);
+    color: #fff;
+    font-size: 13.5px;
+    padding: 10px 18px;
+    border-radius: 999px;
+    box-shadow: 0 12px 30px -12px rgba(0, 0, 0, .8);
+    z-index: 60;
+    animation: toastin .25s ease-out both;
+  }
+
+  .toast[hidden] { display: none; }
+
+  @keyframes toastin { from { opacity: 0; transform: translate(-50%, 10px); } to { opacity: 1; transform: translate(-50%, 0); } }
+
+  @media (max-width: 460px) {
+    .mode { padding: 20px 18px; }
+    .game-head { font-size: 13px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <a class="back" href="index.html">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg>
+      主菜单
+    </a>
+    <h2>中国象棋</h2>
+  </div>
+
+  <main>
+    <!-- ========== 大厅 ========== -->
+    <section id="view-lobby" class="view">
+      <div class="hero">
+        <h1>联机象棋</h1>
+        <p>两台设备，一个 8 位数字，就能开局。</p>
+      </div>
+      <div class="modes">
+        <button class="mode" id="btn-host" type="button">
+          <span class="mode-num">01</span>
+          <h3>创建房间</h3>
+          <p>生成一个 8 位数字，发给对手</p>
+        </button>
+        <button class="mode" id="btn-join" type="button">
+          <span class="mode-num">02</span>
+          <h3>加入房间</h3>
+          <p>输入对手给你的 8 位数字</p>
+        </button>
+      </div>
+      <button class="link" id="btn-local" type="button">不想联机？同一台设备上双人对下</button>
+    </section>
+
+    <!-- ========== 等待对手 ========== -->
+    <section id="view-code" class="view" hidden>
+      <h2>把这个数字发给对手</h2>
+      <div class="code" id="room-code">--------</div>
+      <div class="code-actions">
+        <button class="btn" id="btn-copy" type="button">复制数字</button>
+        <button class="btn btn-ghost" id="btn-cancel-host" type="button">取消</button>
+      </div>
+      <div class="waiting"><span class="pulse"></span><span id="host-status">等待对手加入…</span></div>
+    </section>
+
+    <!-- ========== 输入房间码 ========== -->
+    <section id="view-join" class="view" hidden>
+      <h2>输入对手的 8 位数字</h2>
+      <input id="join-input" class="code-input" type="text" inputmode="numeric" autocomplete="off" maxlength="8" placeholder="00000000" aria-label="房间数字">
+      <p class="err" id="join-error"></p>
+      <div class="code-actions">
+        <button class="btn btn-primary" id="btn-do-join" type="button">加入对局</button>
+        <button class="btn btn-ghost" id="btn-cancel-join" type="button">返回</button>
+      </div>
+    </section>
+
+    <!-- ========== 棋盘 ========== -->
+    <section id="view-game" class="view" hidden>
+      <div class="game">
+        <div class="game-head">
+          <div class="turn"><span class="dot" id="turn-dot"></span><span id="turn-label">红方走棋</span></div>
+          <div class="side" id="side-label">本地双人</div>
+        </div>
+
+        <div class="board" id="board">
+          <svg class="lines" id="lines" viewBox="0 0 9 10" preserveAspectRatio="none" aria-hidden="true"></svg>
+          <div class="marks" id="marks"></div>
+          <div class="pieces" id="pieces"></div>
+          <div class="result" id="result" hidden>
+            <div class="result-card">
+              <h3 id="result-title">红方胜</h3>
+              <p id="result-desc"></p>
+              <div class="row">
+                <button class="btn btn-primary" id="btn-again" type="button">再来一局</button>
+                <button class="btn" id="btn-back-menu" type="button">回到大厅</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="game-actions">
+          <button class="btn btn-ghost" id="btn-resign" type="button">认输</button>
+          <button class="btn btn-ghost" id="btn-leave" type="button">离开</button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="foot">红方先行 · 点棋子看可走位置，再点目标格落子</footer>
+</div>
+
+<div class="toast" id="toast" hidden></div>
+
+<script src="js/vendor/peerjs.min.js"></script>
+<script src="js/engine-xiangqi.js"></script>
+<script src="js/net.js"></script>
+<script src="js/xiangqi-ui.js"></script>
+</body>
+</html>
