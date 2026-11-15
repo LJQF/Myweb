@@ -1,11 +1,11 @@
-/* ==========================================================================
+﻿/* ==========================================================================
    net.js —— 联机层（PeerJS / WebRTC 数据通道）
    房间号就是 8 位数字，映射成 PeerJS 的 peer id：xqz-12345678
    ========================================================================== */
 (function (root) {
   'use strict';
 
-  var PREFIX = 'xqz-';
+  var DEFAULT_PREFIX = 'xqz-';   /* 象棋用 xqz-，五子棋传 gom-，两边的房间号互不干扰 */
 
   var RTC_CONFIG = {
     iceServers: [
@@ -27,6 +27,8 @@
    */
   function create(opts) {
     opts = opts || {};
+    var prefix = opts.prefix || DEFAULT_PREFIX;
+    var PREFIX = prefix;
     var peer = null;
     var conn = null;
     var closed = false;
@@ -139,5 +141,5 @@
     return room;
   }
 
-  root.Net = { create: create, randomCode: randomCode };
+  root.Net = { create: create, randomCode: randomCode, DEFAULT_PREFIX: DEFAULT_PREFIX };
 }(typeof self !== 'undefined' ? self : this));
