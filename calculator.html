@@ -1,0 +1,295 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#f6f9fc" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0b1220" media="(prefers-color-scheme: dark)">
+<title>计算器 · 小站</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230ea5e9'/%3E%3Crect x='14' y='10' width='36' height='14' rx='4' fill='%23fff'/%3E%3Cg fill='%23fff'%3E%3Ccircle cx='22' cy='36' r='3.6'/%3E%3Ccircle cx='32' cy='36' r='3.6'/%3E%3Ccircle cx='42' cy='36' r='3.6'/%3E%3Ccircle cx='22' cy='48' r='3.6'/%3E%3Ccircle cx='32' cy='48' r='3.6'/%3E%3Ccircle cx='42' cy='48' r='3.6'/%3E%3C/g%3E%3C/svg%3E">
+<link rel="stylesheet" href="css/site.css">
+<style>
+  .calc-wrap {
+    display: grid;
+    grid-template-columns: minmax(0, 460px) minmax(0, 320px);
+    gap: 18px;
+    justify-content: center;
+    align-items: start;
+  }
+
+  .calc {
+    padding: 18px;
+    border-radius: 22px;
+    border: 1px solid var(--line);
+    background: var(--surface);
+    -webkit-backdrop-filter: saturate(180%) blur(18px);
+    backdrop-filter: saturate(180%) blur(18px);
+    box-shadow: var(--shadow);
+  }
+
+  /* ---------- 显示屏 ---------- */
+  .display {
+    border-radius: 16px;
+    background: var(--surface-solid);
+    border: 1px solid var(--line);
+    padding: 14px 16px 10px;
+    margin-bottom: 14px;
+    box-shadow: inset 0 2px 10px rgba(0, 0, 0, .07);
+  }
+
+  .expr {
+    display: block;
+    width: 100%;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: clamp(24px, 5vw, 32px);
+    font-weight: 600;
+    text-align: right;
+    padding: 4px 0;
+    border: 0;
+    background: transparent;
+    color: var(--ink);
+    outline: none;
+    letter-spacing: .02em;
+  }
+
+  .expr::placeholder { color: var(--muted); opacity: .35; }
+
+  .expr:focus, .expr:focus-visible { outline: none; }
+  .display:focus-within { border-color: color-mix(in srgb, var(--accent) 55%, transparent); }
+
+  .preview {
+    min-height: 22px;
+    text-align: right;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 14px;
+    color: var(--muted);
+    opacity: .9;
+  }
+
+  .preview.error { color: #ef4444; opacity: 1; }
+
+  /* ---------- 键盘 ---------- */
+  .chips {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 7px;
+    margin-bottom: 10px;
+  }
+
+  .keypad {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
+  }
+
+  .k {
+    font: inherit;
+    font-size: 17px;
+    font-weight: 600;
+    height: 52px;
+    border-radius: 14px;
+    border: 1px solid var(--line);
+    background: var(--surface-solid);
+    color: var(--ink);
+    cursor: pointer;
+    box-shadow: 0 2px 0 rgba(15, 23, 42, .06), var(--shadow-sm);
+    transition: transform .09s ease, background .16s ease, border-color .16s ease, color .16s ease;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .k:hover { border-color: var(--accent); color: var(--accent); }
+  .k:active { transform: translateY(1px) scale(.985); }
+
+  .k.chip {
+    height: 38px;
+    font-size: 13.5px;
+    font-weight: 550;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    color: var(--muted);
+    border-radius: 11px;
+    box-shadow: none;
+  }
+
+  .k.op { color: var(--accent); }
+  .k.eq {
+    grid-column: span 4;
+    background: var(--accent);
+    border-color: transparent;
+    color: #fff;
+    box-shadow: 0 12px 26px -12px rgba(37, 99, 235, .9);
+  }
+  .k.eq:hover { color: #fff; filter: brightness(1.06); }
+  .k.warn { color: #ef4444; }
+  .k.span2 { grid-column: span 2; }
+
+  /* ---------- 历史 ---------- */
+  .history {
+    padding: 18px;
+    border-radius: 22px;
+    border: 1px solid var(--line);
+    background: var(--surface);
+    -webkit-backdrop-filter: saturate(180%) blur(18px);
+    backdrop-filter: saturate(180%) blur(18px);
+    box-shadow: var(--shadow);
+    min-height: 120px;
+  }
+
+  .history-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 10px;
+  }
+
+  .history-head h3 {
+    margin: 0;
+    font-size: 13px;
+    font-weight: 650;
+    letter-spacing: .1em;
+    color: var(--muted);
+  }
+
+  .clear-hist {
+    background: none;
+    border: 0;
+    color: var(--muted);
+    font: inherit;
+    font-size: 12px;
+    cursor: pointer;
+    text-decoration: underline;
+    text-underline-offset: 3px;
+    text-decoration-style: dashed;
+  }
+
+  .clear-hist:hover { color: var(--accent); }
+
+  #history {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    max-height: 460px;
+    overflow-y: auto;
+  }
+
+  #history li {
+    padding: 9px 10px;
+    border-radius: 10px;
+    cursor: pointer;
+    transition: background .16s ease;
+    margin-bottom: 4px;
+  }
+
+  #history li:hover { background: var(--accent-soft); }
+
+  .h-expr {
+    display: block;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12.5px;
+    color: var(--muted);
+    word-break: break-all;
+  }
+
+  .h-val {
+    display: block;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 16px;
+    font-weight: 650;
+    margin-top: 2px;
+    word-break: break-all;
+  }
+
+  .hist-empty { color: var(--muted); font-size: 12.5px; padding: 6px 2px; }
+
+  .hint {
+    margin: 14px 0 0;
+    font-size: 12px;
+    color: var(--muted);
+    text-align: center;
+    line-height: 1.8;
+  }
+
+  @media (max-width: 900px) {
+    .calc-wrap { grid-template-columns: minmax(0, 1fr); }
+    .history { order: 2; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <a class="back" href="index.html">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg>
+      主菜单
+    </a>
+    <h2>计算器</h2>
+  </div>
+
+  <main class="calc-wrap">
+    <section class="calc">
+      <div class="display">
+        <input id="expr" class="expr" type="text" inputmode="text" autocomplete="off" spellcheck="false"
+               placeholder="0" aria-label="算式">
+        <div class="preview" id="preview"></div>
+      </div>
+
+      <div class="chips" id="chips">
+        <button class="k chip" data-ins="sin(" type="button">sin</button>
+        <button class="k chip" data-ins="cos(" type="button">cos</button>
+        <button class="k chip" data-ins="tan(" type="button">tan</button>
+        <button class="k chip" data-ins="ln(" type="button">ln</button>
+        <button class="k chip" data-ins="log(" type="button">log</button>
+        <button class="k chip" data-ins="^2" type="button">x²</button>
+        <button class="k chip" data-ins="^" type="button">xʸ</button>
+        <button class="k chip" data-ins="sqrt(" type="button">√</button>
+        <button class="k chip" data-ins="π" type="button">π</button>
+        <button class="k chip" data-ins="e" type="button">e</button>
+      </div>
+
+      <div class="keypad" id="keypad">
+        <button class="k warn" data-act="clear" type="button">C</button>
+        <button class="k warn" data-act="back" type="button">DEL</button>
+        <button class="k" data-ins="(" type="button">(</button>
+        <button class="k" data-ins=")" type="button">)</button>
+
+        <button class="k" data-ins="7" type="button">7</button>
+        <button class="k" data-ins="8" type="button">8</button>
+        <button class="k" data-ins="9" type="button">9</button>
+        <button class="k op" data-ins="/" type="button">÷</button>
+
+        <button class="k" data-ins="4" type="button">4</button>
+        <button class="k" data-ins="5" type="button">5</button>
+        <button class="k" data-ins="6" type="button">6</button>
+        <button class="k op" data-ins="*" type="button">×</button>
+
+        <button class="k" data-ins="1" type="button">1</button>
+        <button class="k" data-ins="2" type="button">2</button>
+        <button class="k" data-ins="3" type="button">3</button>
+        <button class="k op" data-ins="-" type="button">−</button>
+
+        <button class="k span2" data-ins="0" type="button">0</button>
+        <button class="k" data-ins="." type="button">.</button>
+        <button class="k op" data-ins="+" type="button">+</button>
+
+        <button class="k eq" data-act="equals" type="button">=</button>
+      </div>
+
+      <p class="hint">直接敲键盘也行 · 回车 = 等号 · Esc 清空</p>
+    </section>
+
+    <aside class="history">
+      <div class="history-head">
+        <h3>历史记录</h3>
+        <button class="clear-hist" id="clear-hist" type="button">清空</button>
+      </div>
+      <ul id="history"></ul>
+      <div class="hist-empty" id="hist-empty">还算过什么，会记在这里。</div>
+    </aside>
+  </main>
+
+  <footer class="foot">支持 + − × ÷ ^ 括号，以及 sin cos tan ln log √ π e</footer>
+</div>
+
+<script src="js/expr.js"></script>
+<script src="js/calculator.js"></script>
+</body>
+</html>

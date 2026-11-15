@@ -1,4 +1,4 @@
-/* ==========================================================================
+﻿/* ==========================================================================
    plotter.js —— 函数绘图器
    ========================================================================== */
 (function () {
@@ -20,6 +20,7 @@
   var view = { cx: 0, cy: 0, spanX: 20 };
   var size = { w: 1, h: 1 };
   var funcs = [];
+  var activeInput = null;
   var cursor = null;
   var drag = null;
   var rafId = 0;
@@ -379,6 +380,8 @@
       refresh(f);
     });
 
+    input.addEventListener('focus', function () { activeInput = input; });
+
     input.addEventListener('keydown', function (e) {
       if (e.key === 'Enter') {
         e.preventDefault();
@@ -506,6 +509,62 @@
     }
   });
 
+  /* ---------- 数学键盘 ---------- */
+  function targetInput() {
+    if (activeInput && document.body.contains(activeInput)) return activeInput;
+    if (!funcs.length) addFunc('', false);
+    if (!funcs.length) return null;
+    activeInput = funcs[0].input;
+    return activeInput;
+  }
+
+  function insertKey(text) {
+    if (text === undefined || text === null) return;
+    var el = targetInput();
+    if (!el) return;
+
+    var focused = document.activeElement === el;
+    var s = focused ? (el.selectionStart || 0) : el.value.length;
+    var e = focused ? (el.selectionEnd || 0) : el.value.length;
+    var val = el.value;
+
+    el.value = val.slice(0, s) + text + val.slice(e);
+    var pos = s + text.length;
+    el.focus();
+    el.setSelectionRange(pos, pos);
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+
+  function backspaceKey() {
+    var el = targetInput();
+    if (!el) return;
+
+    var focused = document.activeElement === el;
+    var s = focused ? (el.selectionStart || 0) : el.value.length;
+    var e = focused ? (el.selectionEnd || 0) : el.value.length;
+    if (s === e) {
+      if (s <= 0) return;
+      s -= 1;
+    }
+    el.value = el.value.slice(0, s) + el.value.slice(e);
+    el.focus();
+    el.setSelectionRange(s, s);
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+
+  var kbdEl = document.getElementById('kbd');
+  if (kbdEl) {
+    /* 别让按钮抢走输入框的光标 */
+    kbdEl.addEventListener('pointerdown', function (e) {
+      if (e.target.closest('button')) e.preventDefault();
+    });
+    kbdEl.addEventListener('click', function (e) {
+      var btn = e.target.closest('button');
+      if (!btn) return;
+      if (btn.dataset.act === 'back') backspaceKey();
+      else insertKey(btn.dataset.ins);
+    });
+  }
   if (window.matchMedia) {
     var mq = window.matchMedia('(prefers-color-scheme: dark)');
     var onChange = function () { scheduleDraw(); };
@@ -515,6 +574,7 @@
 
   /* ---------- 启动 ---------- */
   INITIAL.forEach(function (expr) { addFunc(expr, false); });
+  if (funcs.length) activeInput = funcs[0].input;
   resize();
 
   if (typeof ResizeObserver === 'function') {

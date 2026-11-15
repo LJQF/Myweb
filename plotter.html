@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
@@ -194,6 +194,60 @@
 
   .empty-hint[hidden] { display: none; }
 
+  /* ---------- 数学键盘 ---------- */
+  .kbd {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    padding: 12px;
+    border-radius: 18px;
+    border: 1px solid var(--line);
+    background: var(--surface);
+    -webkit-backdrop-filter: saturate(180%) blur(16px);
+    backdrop-filter: saturate(180%) blur(16px);
+    box-shadow: var(--shadow-sm);
+  }
+
+  .kbd-group {
+    display: grid;
+    gap: 6px;
+    align-content: start;
+  }
+
+  .kbd-fn {
+    flex: 1 1 300px;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+
+  .kbd-num {
+    grid-template-columns: repeat(4, minmax(44px, 52px));
+  }
+
+  .kbd button {
+    font: inherit;
+    font-size: 14px;
+    height: 38px;
+    border-radius: 10px;
+    border: 1px solid var(--line);
+    background: var(--surface-solid);
+    color: var(--ink);
+    cursor: pointer;
+    transition: border-color .15s ease, color .15s ease, transform .09s ease, background .15s ease;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .kbd button:hover { border-color: var(--accent); color: var(--accent); }
+  .kbd button:active { transform: translateY(1px); }
+
+  .kbd-num button {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 15px;
+  }
+
+  @media (max-width: 880px) {
+    .kbd-num { grid-template-columns: repeat(4, minmax(0, 1fr)); flex: 1 1 100%; }
+  }
+
   .status {
     display: flex;
     justify-content: space-between;
@@ -251,6 +305,44 @@
         </div>
         <div class="empty-hint" id="empty" hidden>在左侧输入表达式，比如 <b>sin(x)</b></div>
       </div>
+      <div class="kbd" id="kbd" aria-label="数学键盘">
+        <div class="kbd-group kbd-fn">
+          <button type="button" data-ins="x">x</button>
+          <button type="button" data-ins="^2">x²</button>
+          <button type="button" data-ins="^3">x³</button>
+          <button type="button" data-ins="^">xʸ</button>
+          <button type="button" data-ins="sqrt(">√</button>
+          <button type="button" data-ins="(">(</button>
+          <button type="button" data-ins=")">)</button>
+          <button type="button" data-ins="π">π</button>
+          <button type="button" data-ins="sin(">sin</button>
+          <button type="button" data-ins="cos(">cos</button>
+          <button type="button" data-ins="tan(">tan</button>
+          <button type="button" data-ins="ln(">ln</button>
+          <button type="button" data-ins="log(">log</button>
+          <button type="button" data-ins="abs(">|x|</button>
+          <button type="button" data-ins="e">e</button>
+        </div>
+        <div class="kbd-group kbd-num">
+          <button type="button" data-ins="7">7</button>
+          <button type="button" data-ins="8">8</button>
+          <button type="button" data-ins="9">9</button>
+          <button type="button" data-ins="/">÷</button>
+          <button type="button" data-ins="4">4</button>
+          <button type="button" data-ins="5">5</button>
+          <button type="button" data-ins="6">6</button>
+          <button type="button" data-ins="*">×</button>
+          <button type="button" data-ins="1">1</button>
+          <button type="button" data-ins="2">2</button>
+          <button type="button" data-ins="3">3</button>
+          <button type="button" data-ins="-">−</button>
+          <button type="button" data-ins="0">0</button>
+          <button type="button" data-ins=".">.</button>
+          <button type="button" data-ins="+">+</button>
+          <button type="button" data-act="back">DEL</button>
+        </div>
+      </div>
+
       <div class="status">
         <span id="range">x ∈ [−10, 10]</span>
         <span id="tipinfo">滚轮缩放 · 拖动平移 · 双击复位</span>
