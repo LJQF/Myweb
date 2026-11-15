@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#f6f9fc" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0b1220" media="(prefers-color-scheme: dark)">
+<title>贪吃蛇 · 小站</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2316a34a'/%3E%3Cpath d='M16 24h16a8 8 0 010 16H24' fill='none' stroke='%23fff' stroke-width='6' stroke-linecap='round'/%3E%3Ccircle cx='44' cy='22' r='5' fill='%23fff'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="css/site.css">
+<style>
+  .game-wrap { display: flex; flex-direction: column; align-items: center; gap: 16px; }
+
+  .hud {
+    width: min(92vw, 520px);
+    display: flex;
+    align-items: stretch;
+    justify-content: space-between;
+    gap: 10px;
+  }
+
+  .stats { display: flex; gap: 10px; }
+
+  .stat {
+    min-width: 88px;
+    padding: 9px 14px;
+    border-radius: 14px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    -webkit-backdrop-filter: blur(14px);
+    backdrop-filter: blur(14px);
+    box-shadow: var(--shadow-sm);
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .stat span { font-size: 11px; letter-spacing: .1em; color: var(--muted); font-weight: 600; }
+  .stat strong { font-size: 21px; font-weight: 750; font-variant-numeric: tabular-nums; line-height: 1.15; }
+
+  .hud-actions { display: flex; gap: 8px; }
+  .hud-actions .btn { padding: 0 14px; }
+
+  .board-wrap {
+    position: relative;
+    width: min(92vw, 520px);
+    aspect-ratio: 1;
+    border-radius: 22px;
+    overflow: hidden;
+    background: var(--surface-solid);
+    border: 1px solid var(--line);
+    box-shadow: var(--shadow);
+  }
+
+  #board { display: block; width: 100%; height: 100%; }
+
+  .overlay {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    text-align: center;
+    padding: 24px;
+    background: color-mix(in srgb, var(--bg-2) 72%, transparent);
+    -webkit-backdrop-filter: blur(6px);
+    backdrop-filter: blur(6px);
+    animation: fade .25s ease-out both;
+  }
+
+  .overlay[hidden] { display: none; }
+
+  @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+
+  .overlay h2 { margin: 0 0 8px; font-size: clamp(24px, 5vw, 32px); font-weight: 750; }
+  .overlay p { margin: 0 0 20px; color: var(--muted); font-size: 13.5px; line-height: 1.7; }
+  .overlay .row { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+
+  .hint { margin: 0; font-size: 12.5px; color: var(--muted); text-align: center; line-height: 1.8; }
+
+  .hint kbd {
+    font-family: inherit;
+    font-size: 11.5px;
+    padding: 2px 6px;
+    border-radius: 6px;
+    border: 1px solid var(--line);
+    background: var(--surface);
+  }
+
+  .pad { display: none; }
+
+  @media (pointer: coarse) {
+    .pad {
+      display: grid;
+      grid-template-columns: repeat(3, 56px);
+      grid-template-rows: repeat(2, 56px);
+      gap: 8px;
+      justify-content: center;
+      margin-top: 4px;
+    }
+
+    .pad button {
+      width: 56px;
+      height: 56px;
+      border-radius: 14px;
+      border: 1px solid var(--line);
+      background: var(--surface-solid);
+      color: var(--ink);
+      font-size: 20px;
+      box-shadow: var(--shadow-sm);
+    }
+
+    .pad button:active { transform: scale(.94); }
+    .pad .up { grid-column: 2; grid-row: 1; }
+    .pad .left { grid-column: 1; grid-row: 2; }
+    .pad .down { grid-column: 2; grid-row: 2; }
+    .pad .right { grid-column: 3; grid-row: 2; }
+  }
+
+  @media (max-width: 460px) {
+    .hud { flex-direction: column; align-items: stretch; }
+    .hud-actions { justify-content: flex-end; }
+    .hud-actions .btn { padding: 9px 14px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <a class="back" href="index.html">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg>
+      主菜单
+    </a>
+    <h2>贪吃蛇</h2>
+  </div>
+
+  <main class="game-wrap">
+    <div class="hud">
+      <div class="stats">
+        <div class="stat"><span>得分</span><strong id="score">0</strong></div>
+        <div class="stat"><span>最高</span><strong id="best">0</strong></div>
+      </div>
+      <div class="hud-actions">
+        <button class="btn" id="btn-pause" type="button">暂停</button>
+        <button class="btn btn-primary" id="btn-restart" type="button">重开</button>
+      </div>
+    </div>
+
+    <div class="board-wrap">
+      <canvas id="board"></canvas>
+      <div class="overlay" id="overlay">
+        <div>
+          <h2 id="ov-title">贪吃蛇</h2>
+          <p id="ov-desc">方向键 / WASD 控制方向，空格暂停。<br>手机上直接滑动或点下面的方向键。</p>
+          <div class="row">
+            <button class="btn btn-primary" id="btn-start" type="button">开始游戏</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="pad" aria-hidden="true">
+      <button class="up" data-dir="up" type="button">↑</button>
+      <button class="left" data-dir="left" type="button">←</button>
+      <button class="down" data-dir="down" type="button">↓</button>
+      <button class="right" data-dir="right" type="button">→</button>
+    </div>
+
+    <p class="hint">
+      <kbd>↑</kbd> <kbd>↓</kbd> <kbd>←</kbd> <kbd>→</kbd> 或 <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> 移动 · <kbd>空格</kbd> 暂停 · 吃到一个长一格
+    </p>
+  </main>
+
+  <footer class="foot">撞墙或咬到自己就结束 · 速度会越吃越快</footer>
+</div>
+
+<script src="js/engine-snake.js"></script>
+<script src="js/snake-game.js"></script>
+</body>
+</html>

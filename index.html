@@ -47,8 +47,16 @@
 
   .apps {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-    gap: clamp(14px, 2.4vw, 22px);
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: clamp(12px, 1.8vw, 18px);
+  }
+
+  @media (max-width: 940px) {
+    .apps { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+
+  @media (max-width: 620px) {
+    .apps { grid-template-columns: 1fr; }
   }
 
   .app {
@@ -166,7 +174,7 @@
       站点创建成功
     </div>
     <h1>今天想玩点什么？</h1>
-    <p>三个小应用，点开即用，不用登录。</p>
+    <p>五个小应用，点开即用，不用登录。</p>
   </header>
 
   <main class="apps">
@@ -211,6 +219,36 @@
       <span class="app-body">
         <h3>联机象棋 <span class="badge">双人</span></h3>
         <p>一个人开房拿到 8 位数字，另一个人输入就能对弈。</p>
+      </span>
+      <span class="app-arrow" aria-hidden="true">→</span>
+    </a>
+
+    <a class="app" href="snake.html">
+      <span class="app-icon" aria-hidden="true">
+        <svg viewBox="0 0 48 48" fill="none">
+          <path d="M10 37h13a7 7 0 100-14h-6a7 7 0 010-14h10" stroke="#16a34a" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+          <circle cx="33" cy="10" r="6" fill="#22c55e"/>
+          <circle cx="40" cy="36" r="4" fill="#ef4444"/>
+        </svg>
+      </span>
+      <span class="app-body">
+        <h3>贪吃蛇 <span class="badge">游戏</span></h3>
+        <p>吃一个长一格，速度越来越快，别撞墙也别咬自己。</p>
+      </span>
+      <span class="app-arrow" aria-hidden="true">→</span>
+    </a>
+
+    <a class="app" href="sokoban.html">
+      <span class="app-icon" aria-hidden="true">
+        <svg viewBox="0 0 48 48">
+          <rect x="9" y="9" width="23" height="23" rx="4" fill="#d97706"/>
+          <path d="M15 15l11 11M26 15L15 26" stroke="#fff" stroke-width="3" stroke-linecap="round"/>
+          <circle cx="36" cy="36" r="5.5" fill="none" stroke="#16a34a" stroke-width="3"/>
+        </svg>
+      </span>
+      <span class="app-body">
+        <h3>推箱子 <span class="badge">益智</span></h3>
+        <p>8 个关卡，把每个箱子推到目标点，卡住了可以撤销重来。</p>
       </span>
       <span class="app-arrow" aria-hidden="true">→</span>
     </a>
