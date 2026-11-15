@@ -28,8 +28,6 @@
   var analysis = { items: [], points: [], sig: '' };
   var snap = null;
   var tableTimer = 0;
-  var tableXs = [];
-  var tableActive = -1;
   var cursor = null;
   var drag = null;
   var rafId = 0;
@@ -211,7 +209,9 @@
     var px = snap ? snap.sx : cursor.x;
     var py = snap ? snap.sy : cursor.y;
     var wx = snap ? snap.p.x : worldX(px);
+    var i, f, y, sy;
 
+    /* 十字虚线 */
     ctx.save();
     ctx.setLineDash([4, 4]);
     ctx.lineWidth = 1;
@@ -225,13 +225,22 @@
     ctx.stroke();
     ctx.restore();
 
-    for (var i = 0; i < funcs.length; i++) {
-      var f = funcs[i];
+    /* 每条曲线在这个 x 上的点，同时收集读数 */
+    var rows = [];
+    for (i = 0; i < funcs.length; i++) {
+      f = funcs[i];
       if (!f.compiled) continue;
-      var y = f.compiled(wx);
+
+      var name = (f.expr || '').trim();
+      if (name.length > 18) name = name.slice(0, 17) + '…';
+
+      y = f.compiled(wx);
+      rows.push({ color: f.color, text: name + ' = ' + (isFinite(y) ? shortNum(y) : '—') });
       if (!isFinite(y)) continue;
-      var sy = screenY(y);
+
+      sy = screenY(y);
       if (sy < -20 || sy > size.h + 20) continue;
+
       ctx.beginPath();
       ctx.fillStyle = f.color;
       ctx.arc(screenX(wx), sy, 3.2, 0, Math.PI * 2);
@@ -243,14 +252,7 @@
       ctx.stroke();
     }
 
-    var label;
-    if (snap) {
-      var kind = snap.p.type === 'root' ? '零点' : (snap.p.type === 'max' ? '极大值' : '极小值');
-      label = kind + '  x = ' + shortNum(wx) + '   y = ' + shortNum(worldY(py));
-    } else {
-      label = 'x = ' + shortNum(wx) + '   y = ' + shortNum(worldY(py));
-    }
-    ctx.font = '11.5px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';
+    /* 吸附高亮圈 */
     if (snap) {
       ctx.beginPath();
       ctx.strokeStyle = '#f59e0b';
@@ -259,26 +261,54 @@
       ctx.stroke();
     }
 
-    var tw = ctx.measureText(label).width;
-    var bx = Math.min(px + 12, size.w - tw - 16);
-    var by = Math.min(py + 14, size.h - 26);
+    /* 读数面板：只给 x 和各函数在此时的 y */
+    var kind = snap ? (snap.p.type === 'root' ? '零点' : (snap.p.type === 'max' ? '极大值' : '极小值')) : '';
+    var head = (kind ? kind + '  ' : '') + 'x = ' + shortNum(wx);
+
+    ctx.font = '11.5px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';
+    var lineH = 16;
+    var padX = 9;
+    var padY = 8;
+    var headW = ctx.measureText(head).width;
+    var rowW = 0;
+    for (i = 0; i < rows.length; i++) {
+      rowW = Math.max(rowW, 16 + ctx.measureText(rows[i].text).width);
+    }
+
+    var boxW = Math.max(headW, rowW) + padX * 2;
+    var boxH = 24 + rows.length * lineH + padY - 4;
+    var bx = px + 14;
+    var by = py + 14;
+    if (bx + boxW > size.w - 6) bx = px - boxW - 14;
+    if (by + boxH > size.h - 6) by = py - boxH - 14;
     bx = Math.max(6, bx);
     by = Math.max(6, by);
 
     ctx.fillStyle = t.surface;
-    ctx.globalAlpha = 0.92;
-    roundRect(bx, by, tw + 12, 20, 6);
+    ctx.globalAlpha = 0.95;
+    roundRect(bx, by, boxW, boxH, 7);
     ctx.fill();
     ctx.globalAlpha = 1;
     ctx.strokeStyle = t.axis;
     ctx.lineWidth = 0.6;
-    roundRect(bx, by, tw + 12, 20, 6);
+    roundRect(bx, by, boxW, boxH, 7);
     ctx.stroke();
 
-    ctx.fillStyle = t.ink;
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
-    ctx.fillText(label, bx + 6, by + 10.5);
+    ctx.fillStyle = t.ink;
+    ctx.fillText(head, bx + padX, by + 13);
+
+    var ty = by + 24 + lineH / 2 - 2;
+    for (i = 0; i < rows.length; i++) {
+      ctx.beginPath();
+      ctx.fillStyle = rows[i].color;
+      ctx.arc(bx + padX + 4, ty, 3.4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = t.ink;
+      ctx.fillText(rows[i].text, bx + padX + 14, ty);
+      ty += lineH;
+    }
   }
 
   function roundRect(x, y, w, h, r) {
@@ -392,18 +422,13 @@
     row.appendChild(swatch);
     row.appendChild(input);
     row.appendChild(del);
-    var stat = document.createElement('div');
-    stat.className = 'fstat';
-
     item.appendChild(row);
     item.appendChild(err);
-    item.appendChild(stat);
     flist.appendChild(item);
 
     f.el = item;
     f.input = input;
     f.errEl = err;
-    f.statEl = stat;
 
     input.addEventListener('input', function () {
       f.expr = input.value;
@@ -593,101 +618,37 @@
     if (tableTimer) return;
     tableTimer = window.setTimeout(function () {
       tableTimer = 0;
-      renderStats();
       renderTable();
     }, 110);
   }
 
-  function renderStats() {
-    funcs.forEach(function (f, i) {
-      if (!f.statEl) return;
-      var info = analysis.items[i];
-      if (!info || !isFinite(info.min) || !isFinite(info.max)) {
-        f.statEl.textContent = '';
-        return;
-      }
-      f.statEl.innerHTML = '视野内 max <b>' + fmtCell(info.max) + '</b> · min <b>' + fmtCell(info.min) + '</b>';
-    });
-  }
-
+  /* 数值表：只显示每个函数在当前视野内的最大值 / 最小值 */
   function renderTable() {
     var table = document.getElementById('vtable');
     if (!table) return;
 
-    var x0 = worldX(0);
-    var x1 = worldX(size.w);
-    var step = niceStep((x1 - x0) / 10);
-    if (!isFinite(step) || step <= 0) return;
-
-    var start = Math.ceil(x0 / step - 1e-9) * step;
-    var rows = [];
-    for (var x = start; x <= x1 + step * 1e-6 && rows.length < 40; x += step) {
-      rows.push(x === 0 ? 0 : x);
-    }
-
-    var live = funcs.filter(function (f) { return !!f.compiled; });
-
-    var head = '<thead><tr><th>x</th>';
-    live.forEach(function (f) {
-      var name = (f.expr || '').trim() || '函数';
-      if (name.length > 14) name = name.slice(0, 13) + '…';
-      head += '<th><span class="dot" style="background:' + f.color + '"></span>' + escapeHtml(name) + '</th>';
-    });
-    head += '</tr></thead>';
-
-    /* 当前光标（或吸附点）最接近的那一行高亮 */
-    var activeX = snap ? snap.p.x : (cursor ? worldX(cursor.x) : null);
-    var activeRow = -1;
-    if (activeX !== null) {
-      var best = Infinity;
-      rows.forEach(function (rx, i) {
-        var d = Math.abs(rx - activeX);
-        if (d < best) { best = d; activeRow = i; }
-      });
-    }
-
+    var head = '<thead><tr><th>函数</th><th>最大值</th><th>最小值</th></tr></thead>';
     var body = '<tbody>';
-    rows.forEach(function (rx, i) {
-      body += '<tr' + (i === activeRow ? ' class="active"' : '') + '>';
-      body += '<td>' + tickLabel(rx, step) + '</td>';
-      live.forEach(function (f) {
-        body += '<td>' + fmtCell(f.compiled(rx)) + '</td>';
-      });
+
+    funcs.forEach(function (f, i) {
+      if (!f.compiled) return;
+
+      var info = analysis.items[i];
+      var name = (f.expr || '').trim() || '函数';
+      if (name.length > 16) name = name.slice(0, 15) + '…';
+
+      body += '<tr>';
+      body += '<td><span class="dot" style="background:' + f.color + '"></span>' + escapeHtml(name) + '</td>';
+      body += '<td>' + (info && isFinite(info.max) ? fmtCell(info.max) : '—') + '</td>';
+      body += '<td>' + (info && isFinite(info.min) ? fmtCell(info.min) : '—') + '</td>';
       body += '</tr>';
     });
-    body += '</tbody>';
 
+    body += '</tbody>';
     table.innerHTML = head + body;
 
-    tableXs = rows.slice();
-    tableActive = -1;
-    updateRowHighlight();
-
     var hint = document.getElementById('values-hint');
-    if (hint) hint.textContent = 'x ∈ [' + shortNum(x0) + ', ' + shortNum(x1) + '] · 步长 ' + shortNum(step);
-  }
-
-  /* 数值表里高亮离鼠标最近的那一行 */
-  function updateRowHighlight() {
-    var table = document.getElementById('vtable');
-    if (!table || !table.tBodies.length || !tableXs.length) return;
-
-    var x = snap ? snap.p.x : (cursor ? worldX(cursor.x) : null);
-    var idx = -1;
-    if (x !== null && isFinite(x)) {
-      var best = Infinity;
-      for (var i = 0; i < tableXs.length; i++) {
-        var d = Math.abs(tableXs[i] - x);
-        if (d < best) { best = d; idx = i; }
-      }
-    }
-
-    if (idx === tableActive) return;
-
-    var rows = table.tBodies[0].rows;
-    if (tableActive >= 0 && rows[tableActive]) rows[tableActive].classList.remove('active');
-    tableActive = idx;
-    if (idx >= 0 && rows[idx]) rows[idx].classList.add('active');
+    if (hint) hint.textContent = '当前视野内';
   }
 
   /* 吸附：找离鼠标最近的特殊点 */
@@ -723,7 +684,6 @@
     var rect = canvas.getBoundingClientRect();
     cursor = { x: e.clientX - rect.left, y: e.clientY - rect.top };
     snap = findSnap(cursor.x, cursor.y);
-    updateRowHighlight();
 
     if (drag) {
       var s = scale();
