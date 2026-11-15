@@ -1,4 +1,4 @@
-﻿/* ==========================================================================
+/* ==========================================================================
    xiangqi-ui.js —— 棋盘渲染、交互、房间界面
    ========================================================================== */
 (function () {
@@ -34,6 +34,7 @@
   var state = {
     board: X.initialBoard(),
     side: 'r',
+    flipped: false,   /* 执黑时把棋盘转 180°，让自己的子在下边 */
     mode: 'none',     /* 'online' | 'local' */
     mySide: null,
     selected: null,
@@ -83,6 +84,14 @@
   }
 
   function isOnline() { return state.mode === 'online'; }
+
+  /* 逻辑坐标 <-> 屏幕坐标（执黑时整体旋转 180°） */
+  function toScreen(r, c) {
+    if (!state.flipped) return { r: r, c: c };
+    return { r: X.ROWS - 1 - r, c: X.COLS - 1 - c };
+  }
+
+  var fromScreen = toScreen;
 
   function canIMove() {
     if (state.over) return false;
@@ -139,8 +148,9 @@
         el.className = 'piece ' + (p.s === 'r' ? 'red' : 'black');
         el.dataset.r = String(r);
         el.dataset.c = String(c);
-        el.style.left = (c * 100 / X.COLS) + '%';
-        el.style.top = (r * 100 / X.ROWS) + '%';
+        var pos = toScreen(r, c);
+        el.style.left = (pos.c * 100 / X.COLS) + '%';
+        el.style.top = (pos.r * 100 / X.ROWS) + '%';
 
         if (state.selected && state.selected.r === r && state.selected.c === c) el.classList.add('sel');
         if (state.justMoved && state.justMoved.r === r && state.justMoved.c === c) el.classList.add('moved');
@@ -161,8 +171,9 @@
   function addMark(pos, cls) {
     var el = document.createElement('div');
     el.className = 'mark ' + cls;
-    el.style.left = (pos.c * 100 / X.COLS) + '%';
-    el.style.top = (pos.r * 100 / X.ROWS) + '%';
+    var sp = toScreen(pos.r, pos.c);
+    el.style.left = (sp.c * 100 / X.COLS) + '%';
+    el.style.top = (sp.r * 100 / X.ROWS) + '%';
     els.marks.appendChild(el);
   }
 
@@ -191,6 +202,7 @@
     }
 
     els.sideLabel.textContent = online ? (state.mySide === 'r' ? '你执红' : '你执黑') : '本地双人';
+    els.board.dataset.flipped = state.flipped ? '1' : '0';
     els.board.classList.toggle('locked', !myTurn);
   }
 
@@ -246,10 +258,10 @@
 
   function cellFromEvent(e) {
     var rect = els.board.getBoundingClientRect();
-    var c = Math.floor((e.clientX - rect.left) / rect.width * X.COLS);
-    var r = Math.floor((e.clientY - rect.top) / rect.height * X.ROWS);
-    if (r < 0 || r >= X.ROWS || c < 0 || c >= X.COLS) return null;
-    return { r: r, c: c };
+    var sc = Math.floor((e.clientX - rect.left) / rect.width * X.COLS);
+    var sr = Math.floor((e.clientY - rect.top) / rect.height * X.ROWS);
+    if (sr < 0 || sr >= X.ROWS || sc < 0 || sc >= X.COLS) return null;
+    return fromScreen(sr, sc);
   }
 
   els.board.addEventListener('click', function (e) {
@@ -338,6 +350,7 @@
     startHeartbeat();
     state.mode = 'online';
     state.mySide = mySide;
+    state.flipped = mySide === 'b';
     resetBoard();
     showView('game');
     measure();
@@ -349,6 +362,7 @@
     closeRoom();
     state.mode = 'local';
     state.mySide = null;
+    state.flipped = false;
     resetBoard();
     showView('game');
     measure();
