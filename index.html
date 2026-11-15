@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>2048</title>
 <style>
   :root {
@@ -24,7 +24,9 @@
                  "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
     user-select: none;
     -webkit-user-select: none;
+    -webkit-touch-callout: none;
     -webkit-tap-highlight-color: transparent;
+    overscroll-behavior: none;   /* 防止移动端下拉刷新 */
   }
 
   .app { width: 100%; max-width: 480px; }
@@ -88,6 +90,14 @@
     color: #8f857d;
   }
 
+  .hint-mobile { display: none; }
+
+  /* 触摸设备上显示滑动提示 */
+  @media (hover: none) and (pointer: coarse) {
+    .hint-desktop { display: none; }
+    .hint-mobile { display: inline; }
+  }
+
   .btn {
     flex-shrink: 0;
     padding: 10px 18px;
@@ -100,6 +110,7 @@
     font-weight: 700;
     cursor: pointer;
     transition: background .15s;
+    touch-action: manipulation;
   }
 
   .btn:hover { background: #9f8b77; }
@@ -113,7 +124,7 @@
     padding: var(--gap);
     background: #bbada0;
     border-radius: 8px;
-    touch-action: none;
+    touch-action: none;   /* 关键：让手指滑动不滚动页面 */
   }
 
   .grid-bg {
@@ -226,7 +237,10 @@
   </header>
 
   <div class="toolbar">
-    <p class="hint">方向键 ↑ ↓ ← → 或 W A S D 移动方块</p>
+    <p class="hint">
+      <span class="hint-desktop">方向键 ↑ ↓ ← → 或 W A S D 移动方块</span>
+      <span class="hint-mobile">滑动屏幕，或使用方向键移动方块</span>
+    </p>
     <button class="btn" id="newGame">新游戏</button>
   </div>
 
@@ -568,6 +582,7 @@
     over = false;
     won = false;
     busy = false;
+    touchId = null;
 
     hideOverlay();
     updateScore();
@@ -577,7 +592,7 @@
     addRandomTile();
   }
 
-  /* ======================= 事件绑定 ======================= */
+  /* ======================= 键盘控制 ======================= */
   window.addEventListener('keydown', function (e) {
     const dir = KEYMAP[e.key];
     if (!dir) return;
@@ -593,6 +608,66 @@
 
   newGameBtn.addEventListener('click', newGame);
 
+  /* ======================= 触摸控制 ======================= */
+  let touchStartX = 0;
+  let touchStartY = 0;
+  let touchId = null;   // 记录起始手指，多指时忽略后续手指
+
+  boardEl.addEventListener('touchstart', function (e) {
+    // 动画中不记录，避免把一次滑动拆成两次
+    if (busy || over) { touchId = null; return; }
+
+    // 仅支持单指滑动，双指（缩放等）忽略
+    if (e.touches.length !== 1) { touchId = null; return; }
+
+    const t = e.touches[0];
+    touchId = t.identifier;
+    touchStartX = t.clientX;
+    touchStartY = t.clientY;
+  }, { passive: true });
+
+  boardEl.addEventListener('touchmove', function (e) {
+    // 阻止页面滚动与下拉刷新
+    if (e.cancelable) e.preventDefault();
+  }, { passive: false });
+
+  boardEl.addEventListener('touchend', function (e) {
+    if (touchId === null) return;
+
+    // 找到起始那根手指的结束事件
+    const t = Array.prototype.slice.call(e.changedTouches)
+      .filter(function (tt) { return tt.identifier === touchId; })[0];
+    touchId = null;
+
+    if (!t || busy || over) return;
+
+    const dx = t.clientX - touchStartX;
+    const dy = t.clientY - touchStartY;
+    const absX = Math.abs(dx);
+    const absY = Math.abs(dy);
+
+    // 阈值随棋盘宽度自适应：太小的位移视为点击
+    const threshold = Math.max(24, boardEl.getBoundingClientRect().width * 0.06);
+    if (Math.max(absX, absY) < threshold) return;
+
+    // 胜利遮罩下，滑动即继续游戏（与键盘一致）
+    if (overlayEl.classList.contains('show')) hideOverlay();
+
+    let dir;
+    if (absX > absY) {
+      dir = dx > 0 ? 'right' : 'left';
+    } else {
+      dir = dy > 0 ? 'down' : 'up';
+    }
+
+    move(dir);
+  }, { passive: true });
+
+  boardEl.addEventListener('touchcancel', function () {
+    touchId = null;
+  });
+
+  /* ======================= 窗口尺寸变化 ======================= */
   let resizeTimer = null;
   window.addEventListener('resize', function () {
     clearTimeout(resizeTimer);
