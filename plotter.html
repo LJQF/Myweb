@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#f6f9fc" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0b1220" media="(prefers-color-scheme: dark)">
+<title>函数绘图器 · 小站</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%232563eb'/%3E%3Cpath d='M10 44c9 0 12-24 22-24s8 24 22 24' fill='none' stroke='%23fff' stroke-width='5' stroke-linecap='round'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="css/site.css">
+<style>
+  .plotter {
+    display: grid;
+    grid-template-columns: 330px minmax(0, 1fr);
+    gap: 18px;
+    align-items: start;
+  }
+
+  /* ---------- 左侧函数面板 ---------- */
+  .panel {
+    padding: 18px;
+    border-radius: 20px;
+    border: 1px solid var(--line);
+    background: var(--surface);
+    -webkit-backdrop-filter: saturate(180%) blur(18px);
+    backdrop-filter: saturate(180%) blur(18px);
+    box-shadow: var(--shadow);
+  }
+
+  .panel-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 14px;
+  }
+
+  .panel-head h3 {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 650;
+    letter-spacing: .04em;
+    color: var(--muted);
+  }
+
+  .frow {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    margin-bottom: 8px;
+  }
+
+  .swatch {
+    flex: 0 0 auto;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 18%, transparent);
+  }
+
+  .finput {
+    flex: 1 1 auto;
+    min-width: 0;
+    font: inherit;
+    font-size: 14px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    padding: 9px 12px;
+    border-radius: 11px;
+    border: 1px solid var(--line);
+    background: var(--surface-solid);
+    color: var(--ink);
+    transition: border-color .16s ease, box-shadow .16s ease;
+  }
+
+  .finput:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); outline: none; }
+  .finput.invalid { border-color: #ef4444; box-shadow: 0 0 0 3px rgba(239, 68, 68, .12); }
+
+  .fdel {
+    flex: 0 0 auto;
+    width: 28px;
+    height: 28px;
+    border-radius: 9px;
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--muted);
+    font-size: 17px;
+    line-height: 1;
+    cursor: pointer;
+    transition: background .16s ease, color .16s ease;
+  }
+
+  .fdel:hover { background: rgba(239, 68, 68, .1); color: #ef4444; }
+
+  .ferr {
+    margin: -3px 0 10px 34px;
+    font-size: 12px;
+    color: #ef4444;
+    line-height: 1.5;
+    min-height: 0;
+  }
+
+  .ferr:empty { display: none; }
+
+  .presets {
+    margin-top: 16px;
+    padding-top: 14px;
+    border-top: 1px dashed var(--line);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 7px;
+    align-items: center;
+  }
+
+  .presets span {
+    font-size: 12px;
+    color: var(--muted);
+    margin-right: 2px;
+  }
+
+  .presets button {
+    font: inherit;
+    font-size: 12px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    padding: 5px 10px;
+    border-radius: 999px;
+    border: 1px solid var(--line);
+    background: var(--surface-solid);
+    color: var(--muted);
+    cursor: pointer;
+    transition: all .16s ease;
+  }
+
+  .presets button:hover { color: var(--accent); border-color: var(--accent); }
+
+  /* ---------- 右侧画布 ---------- */
+  .stage { display: flex; flex-direction: column; gap: 10px; }
+
+  .canvas-wrap {
+    position: relative;
+    height: clamp(340px, 60vh, 620px);
+    border-radius: 20px;
+    border: 1px solid var(--line);
+    background: var(--surface-solid);
+    box-shadow: var(--shadow);
+    overflow: hidden;
+    cursor: grab;
+    touch-action: none;
+  }
+
+  .canvas-wrap.dragging { cursor: grabbing; }
+
+  #plot { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+
+  .toolbar {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    display: flex;
+    gap: 6px;
+    z-index: 2;
+  }
+
+  .toolbar button {
+    width: 34px;
+    height: 34px;
+    border-radius: 10px;
+    border: 1px solid var(--line);
+    background: color-mix(in srgb, var(--surface-solid) 82%, transparent);
+    -webkit-backdrop-filter: blur(10px);
+    backdrop-filter: blur(10px);
+    color: var(--ink);
+    font-size: 15px;
+    line-height: 1;
+    cursor: pointer;
+    display: grid;
+    place-items: center;
+    transition: all .16s ease;
+  }
+
+  .toolbar button:hover { border-color: var(--accent); color: var(--accent); }
+
+  .toolbar button[data-act="reset"] { width: auto; padding: 0 12px; font-size: 12.5px; }
+
+  .empty-hint {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    pointer-events: none;
+    color: var(--muted);
+    font-size: 13.5px;
+    text-align: center;
+    padding: 20px;
+  }
+
+  .empty-hint[hidden] { display: none; }
+
+  .status {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+    font-size: 12px;
+    color: var(--muted);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    padding: 0 4px;
+  }
+
+  @media (max-width: 880px) {
+    .plotter { grid-template-columns: 1fr; }
+    .panel { order: 2; }
+    .stage { order: 1; }
+    .canvas-wrap { height: clamp(300px, 46vh, 460px); }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <a class="back" href="index.html">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg>
+      主菜单
+    </a>
+    <h2>函数绘图器</h2>
+  </div>
+
+  <main class="plotter">
+    <aside class="panel">
+      <div class="panel-head">
+        <h3>函数列表</h3>
+        <button class="btn btn-ghost" id="btn-add" type="button">＋ 添加</button>
+      </div>
+      <div id="flist"></div>
+      <div class="presets">
+        <span>试试：</span>
+        <button type="button" data-expr="sin(x)">sin(x)</button>
+        <button type="button" data-expr="x^2/4">x^2/4</button>
+        <button type="button" data-expr="1/x">1/x</button>
+        <button type="button" data-expr="e^(-x^2)">e^(-x^2)</button>
+        <button type="button" data-expr="sin(x)/x">sin(x)/x</button>
+        <button type="button" data-expr="sqrt(abs(x))">√|x|</button>
+      </div>
+    </aside>
+
+    <section class="stage">
+      <div class="canvas-wrap" id="stage">
+        <canvas id="plot"></canvas>
+        <div class="toolbar">
+          <button type="button" data-act="in" title="放大">＋</button>
+          <button type="button" data-act="out" title="缩小">－</button>
+          <button type="button" data-act="reset">重置</button>
+        </div>
+        <div class="empty-hint" id="empty" hidden>在左侧输入表达式，比如 <b>sin(x)</b></div>
+      </div>
+      <div class="status">
+        <span id="range">x ∈ [−10, 10]</span>
+        <span id="tipinfo">滚轮缩放 · 拖动平移 · 双击复位</span>
+      </div>
+    </section>
+  </main>
+
+  <footer class="foot">支持 + − × ÷ ^、括号、sin/cos/tan/log/ln/√ 等，可写 2x 这样的隐式乘法</footer>
+</div>
+
+<script src="js/expr.js"></script>
+<script src="js/plotter.js"></script>
+</body>
+</html>
