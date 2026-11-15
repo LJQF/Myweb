@@ -201,6 +201,88 @@
 
   .empty-hint[hidden] { display: none; }
 
+  /* ---------- 函数统计 ---------- */
+  .fstat {
+    margin: 0 0 10px 34px;
+    font-size: 11.5px;
+    line-height: 1.6;
+    color: var(--muted);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+
+  .fstat:empty { display: none; }
+
+  /* ---------- 数值表 ---------- */
+  .values {
+    margin-top: 14px;
+    padding-top: 12px;
+    border-top: 1px dashed var(--line);
+  }
+
+  .values-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 6px;
+  }
+
+  .values-head h3 {
+    margin: 0;
+    font-size: 12.5px;
+    font-weight: 650;
+    letter-spacing: .12em;
+    color: var(--muted);
+  }
+
+  .values-hint {
+    font-size: 11.5px;
+    color: var(--muted);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+
+  .values-scroll { max-height: 300px; overflow: auto; }
+
+  .vtable {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12.5px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .vtable th,
+  .vtable td {
+    padding: 4px 6px;
+    text-align: right;
+    white-space: nowrap;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .vtable th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: var(--surface-solid);
+    color: var(--muted);
+    font-weight: 600;
+  }
+
+  .vtable th:first-child,
+  .vtable td:first-child { text-align: left; color: var(--muted); }
+
+  .vtable tbody tr:hover td { background: color-mix(in srgb, var(--accent) 7%, transparent); }
+  .vtable tbody tr.active td { background: var(--accent-soft); }
+
+  .vtable .dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-right: 6px;
+    vertical-align: middle;
+  }
+
   /* ---------- 数学键盘 ---------- */
   .kbd {
     display: flex;
@@ -300,6 +382,15 @@
         <button type="button" data-expr="sin(x)/x">sin(x)/x</button>
         <button type="button" data-expr="sqrt(abs(x))">√|x|</button>
       </div>
+      <section class="values" id="values">
+        <div class="values-head">
+          <h3>数值表</h3>
+          <span class="values-hint" id="values-hint"></span>
+        </div>
+        <div class="values-scroll">
+          <table class="vtable" id="vtable"></table>
+        </div>
+      </section>
     </aside>
 
     <section class="stage">
@@ -350,6 +441,7 @@
         </div>
       </div>
 
+
       <div class="status">
         <span id="range">x ∈ [−10, 10]</span>
         <span id="tipinfo">滚轮缩放 · 拖动平移 · 双击复位</span>
@@ -360,7 +452,7 @@
   <footer class="foot">支持 + − × ÷ ^、括号、sin/cos/tan/log/ln/√ 等，可写 2x 这样的隐式乘法</footer>
 </div>
 
-<script src="js/expr.js?v=15"></script>
-<script src="js/plotter.js?v=15"></script>
+<script src="js/expr.js?v=16"></script>
+<script src="js/plotter.js?v=16"></script>
 </body>
 </html>

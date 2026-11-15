@@ -22,6 +22,14 @@
   var funcs = [];
   var activeInput = null;
   var pendingCaret = null;
+  var funcVersion = 0;
+
+  /* 数值分析：每个函数的极值、零点，供吸附和数值表使用 */
+  var analysis = { items: [], points: [], sig: '' };
+  var snap = null;
+  var tableTimer = 0;
+  var tableXs = [];
+  var tableActive = -1;
   var cursor = null;
   var drag = null;
   var rafId = 0;
@@ -200,9 +208,9 @@
 
   function drawCrosshair() {
     var t = theme();
-    var px = cursor.x;
-    var py = cursor.y;
-    var wx = worldX(px);
+    var px = snap ? snap.sx : cursor.x;
+    var py = snap ? snap.sy : cursor.y;
+    var wx = snap ? snap.p.x : worldX(px);
 
     ctx.save();
     ctx.setLineDash([4, 4]);
@@ -235,8 +243,22 @@
       ctx.stroke();
     }
 
-    var label = 'x = ' + shortNum(wx) + '   y = ' + shortNum(worldY(py));
+    var label;
+    if (snap) {
+      var kind = snap.p.type === 'root' ? '零点' : (snap.p.type === 'max' ? '极大值' : '极小值');
+      label = kind + '  x = ' + shortNum(wx) + '   y = ' + shortNum(worldY(py));
+    } else {
+      label = 'x = ' + shortNum(wx) + '   y = ' + shortNum(worldY(py));
+    }
     ctx.font = '11.5px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';
+    if (snap) {
+      ctx.beginPath();
+      ctx.strokeStyle = '#f59e0b';
+      ctx.lineWidth = 2.2;
+      ctx.arc(px, py, 9, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+
     var tw = ctx.measureText(label).width;
     var bx = Math.min(px + 12, size.w - tw - 16);
     var by = Math.min(py + 14, size.h - 26);
@@ -277,6 +299,8 @@
 
     var step = niceStep(96 / s);
     if (!isFinite(step) || step <= 0) return;
+
+    syncAnalysis();
 
     drawGrid(step);
     drawAxes(step);
@@ -368,13 +392,18 @@
     row.appendChild(swatch);
     row.appendChild(input);
     row.appendChild(del);
+    var stat = document.createElement('div');
+    stat.className = 'fstat';
+
     item.appendChild(row);
     item.appendChild(err);
+    item.appendChild(stat);
     flist.appendChild(item);
 
     f.el = item;
     f.input = input;
     f.errEl = err;
+    f.statEl = stat;
 
     input.addEventListener('input', function () {
       f.expr = input.value;
@@ -414,6 +443,7 @@
       f.input.classList.toggle('invalid', !res.ok);
       f.errEl.textContent = res.ok ? '' : res.error;
     }
+    funcVersion += 1;
     emptyHint.hidden = funcs.some(function (x) { return !!x.compiled; });
     scheduleDraw();
   }
@@ -435,6 +465,245 @@
     return f;
   }
 
+  /* ---------------- 数值分析：零点 / 极值 / 最值 ---------------- */
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"]/g, function (ch) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch];
+    });
+  }
+
+  function fmtCell(v) {
+    if (typeof v !== 'number' || !isFinite(v)) return '—';
+    if (v === 0) return '0';
+    var a = Math.abs(v);
+    if (a >= 1e5 || a < 1e-4) return v.toExponential(1);
+    return String(parseFloat(v.toFixed(3)));
+  }
+
+  /* 二分法找零点 */
+  function bisectZero(fn, a, b) {
+    var fa = fn(a);
+    var fb = fn(b);
+    if (!isFinite(fa) || !isFinite(fb)) return NaN;
+    for (var i = 0; i < 30; i++) {
+      var m = (a + b) / 2;
+      var fm = fn(m);
+      if (!isFinite(fm)) return NaN;
+      if ((fa > 0) !== (fm > 0)) { b = m; } else { a = m; fa = fm; }
+    }
+    return (a + b) / 2;
+  }
+
+  /* 三分法找区间内的极大 / 极小 */
+  function ternaryExtremum(fn, a, b, mode) {
+    for (var i = 0; i < 30; i++) {
+      var m1 = a + (b - a) / 3;
+      var m2 = b - (b - a) / 3;
+      var f1 = fn(m1);
+      var f2 = fn(m2);
+      if (!isFinite(f1) || !isFinite(f2)) return (a + b) / 2;
+      if (mode === 'max' ? f1 < f2 : f1 > f2) a = m1; else b = m2;
+    }
+    return (a + b) / 2;
+  }
+
+  function analyzeFunc(fn, x0, x1) {
+    var N = 300;
+    var dx = (x1 - x0) / N;
+    var ys = new Array(N + 1);
+    var min = Infinity;
+    var max = -Infinity;
+    var i, x, y;
+
+    for (i = 0; i <= N; i++) {
+      x = x0 + dx * i;
+      y = fn(x);
+      ys[i] = y;
+      if (isFinite(y)) {
+        if (y < min) min = y;
+        if (y > max) max = y;
+      }
+    }
+
+    var pts = [];
+
+    /* 零点 */
+    for (i = 1; i <= N; i++) {
+      var a = ys[i - 1];
+      var b = ys[i];
+      if (!isFinite(a) || !isFinite(b)) continue;
+      if (a === 0) { pts.push({ type: 'root', x: x0 + dx * (i - 1), y: 0 }); continue; }
+      if (b === 0) { pts.push({ type: 'root', x: x0 + dx * i, y: 0 }); continue; }
+      if ((a > 0) !== (b > 0)) {
+        var r = bisectZero(fn, x0 + dx * (i - 1), x0 + dx * i);
+        if (isFinite(r)) pts.push({ type: 'root', x: r, y: 0 });
+      }
+    }
+
+    /* 极值 */
+    for (i = 1; i < N; i++) {
+      var p = ys[i - 1], q = ys[i], rr = ys[i + 1];
+      if (!isFinite(p) || !isFinite(q) || !isFinite(rr)) continue;
+      if (q > p && q > rr) {
+        var mx = ternaryExtremum(fn, x0 + dx * (i - 1), x0 + dx * (i + 1), 'max');
+        if (isFinite(mx)) pts.push({ type: 'max', x: mx, y: fn(mx) });
+      } else if (q < p && q < rr) {
+        var mn = ternaryExtremum(fn, x0 + dx * (i - 1), x0 + dx * (i + 1), 'min');
+        if (isFinite(mn)) pts.push({ type: 'min', x: mn, y: fn(mn) });
+      }
+    }
+
+    pts.sort(function (a2, b2) { return a2.x - b2.x; });
+    var out = [];
+    for (i = 0; i < pts.length; i++) {
+      if (out.length && Math.abs(pts[i].x - out[out.length - 1].x) < dx * 0.5) continue;
+      out.push(pts[i]);
+    }
+    if (out.length > 30) out = out.slice(0, 30);
+
+    return { min: min, max: max, points: out };
+  }
+
+  function syncAnalysis() {
+    var sig = view.cx.toFixed(3) + '|' + view.spanX.toFixed(4) + '|' + size.w + '|' + funcVersion;
+    if (sig === analysis.sig) return;
+    analysis.sig = sig;
+
+    var x0 = worldX(0);
+    var x1 = worldX(size.w);
+    var items = [];
+    var points = [];
+
+    funcs.forEach(function (f) {
+      if (!f.compiled) { items.push(null); return; }
+      var info = analyzeFunc(f.compiled, x0, x1);
+      items.push(info);
+      info.points.forEach(function (p) {
+        points.push({ x: p.x, y: p.y, type: p.type, color: f.color });
+      });
+    });
+
+    analysis.items = items;
+    analysis.points = points;
+
+    scheduleTable();
+  }
+
+  function scheduleTable() {
+    if (tableTimer) return;
+    tableTimer = window.setTimeout(function () {
+      tableTimer = 0;
+      renderStats();
+      renderTable();
+    }, 110);
+  }
+
+  function renderStats() {
+    funcs.forEach(function (f, i) {
+      if (!f.statEl) return;
+      var info = analysis.items[i];
+      if (!info || !isFinite(info.min) || !isFinite(info.max)) {
+        f.statEl.textContent = '';
+        return;
+      }
+      f.statEl.innerHTML = '视野内 max <b>' + fmtCell(info.max) + '</b> · min <b>' + fmtCell(info.min) + '</b>';
+    });
+  }
+
+  function renderTable() {
+    var table = document.getElementById('vtable');
+    if (!table) return;
+
+    var x0 = worldX(0);
+    var x1 = worldX(size.w);
+    var step = niceStep((x1 - x0) / 10);
+    if (!isFinite(step) || step <= 0) return;
+
+    var start = Math.ceil(x0 / step - 1e-9) * step;
+    var rows = [];
+    for (var x = start; x <= x1 + step * 1e-6 && rows.length < 40; x += step) {
+      rows.push(x === 0 ? 0 : x);
+    }
+
+    var live = funcs.filter(function (f) { return !!f.compiled; });
+
+    var head = '<thead><tr><th>x</th>';
+    live.forEach(function (f) {
+      var name = (f.expr || '').trim() || '函数';
+      if (name.length > 14) name = name.slice(0, 13) + '…';
+      head += '<th><span class="dot" style="background:' + f.color + '"></span>' + escapeHtml(name) + '</th>';
+    });
+    head += '</tr></thead>';
+
+    /* 当前光标（或吸附点）最接近的那一行高亮 */
+    var activeX = snap ? snap.p.x : (cursor ? worldX(cursor.x) : null);
+    var activeRow = -1;
+    if (activeX !== null) {
+      var best = Infinity;
+      rows.forEach(function (rx, i) {
+        var d = Math.abs(rx - activeX);
+        if (d < best) { best = d; activeRow = i; }
+      });
+    }
+
+    var body = '<tbody>';
+    rows.forEach(function (rx, i) {
+      body += '<tr' + (i === activeRow ? ' class="active"' : '') + '>';
+      body += '<td>' + tickLabel(rx, step) + '</td>';
+      live.forEach(function (f) {
+        body += '<td>' + fmtCell(f.compiled(rx)) + '</td>';
+      });
+      body += '</tr>';
+    });
+    body += '</tbody>';
+
+    table.innerHTML = head + body;
+
+    tableXs = rows.slice();
+    tableActive = -1;
+    updateRowHighlight();
+
+    var hint = document.getElementById('values-hint');
+    if (hint) hint.textContent = 'x ∈ [' + shortNum(x0) + ', ' + shortNum(x1) + '] · 步长 ' + shortNum(step);
+  }
+
+  /* 数值表里高亮离鼠标最近的那一行 */
+  function updateRowHighlight() {
+    var table = document.getElementById('vtable');
+    if (!table || !table.tBodies.length || !tableXs.length) return;
+
+    var x = snap ? snap.p.x : (cursor ? worldX(cursor.x) : null);
+    var idx = -1;
+    if (x !== null && isFinite(x)) {
+      var best = Infinity;
+      for (var i = 0; i < tableXs.length; i++) {
+        var d = Math.abs(tableXs[i] - x);
+        if (d < best) { best = d; idx = i; }
+      }
+    }
+
+    if (idx === tableActive) return;
+
+    var rows = table.tBodies[0].rows;
+    if (tableActive >= 0 && rows[tableActive]) rows[tableActive].classList.remove('active');
+    tableActive = idx;
+    if (idx >= 0 && rows[idx]) rows[idx].classList.add('active');
+  }
+
+  /* 吸附：找离鼠标最近的特殊点 */
+  function findSnap(px, py) {
+    var best = null;
+    var bestD = 18;
+    for (var i = 0; i < analysis.points.length; i++) {
+      var p = analysis.points[i];
+      var sx = screenX(p.x);
+      var sy = screenY(p.y);
+      var d = Math.sqrt((sx - px) * (sx - px) + (sy - py) * (sy - py));
+      if (d < bestD) { bestD = d; best = { p: p, sx: sx, sy: sy }; }
+    }
+    return best;
+  }
+
   /* ---------- 交互 ---------- */
   stage.addEventListener('wheel', function (e) {
     e.preventDefault();
@@ -453,6 +722,8 @@
   stage.addEventListener('pointermove', function (e) {
     var rect = canvas.getBoundingClientRect();
     cursor = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    snap = findSnap(cursor.x, cursor.y);
+    updateRowHighlight();
 
     if (drag) {
       var s = scale();
@@ -478,6 +749,7 @@
 
   stage.addEventListener('pointerleave', function () {
     cursor = null;
+    snap = null;
     scheduleDraw();
   });
 
