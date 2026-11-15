@@ -21,6 +21,7 @@
   var size = { w: 1, h: 1 };
   var funcs = [];
   var activeInput = null;
+  var pendingCaret = null;
   var cursor = null;
   var drag = null;
   var rafId = 0;
@@ -518,30 +519,45 @@
     return activeInput;
   }
 
+  function caretIn(el) {
+    if (pendingCaret && pendingCaret.el === el) {
+      return { start: pendingCaret.start, end: pendingCaret.end };
+    }
+    var end = el.value.length;
+    return { start: end, end: end };
+  }
+
+  function flash(el) {
+    el.classList.remove('flash');
+    void el.offsetWidth;
+    el.classList.add('flash');
+    window.setTimeout(function () { el.classList.remove('flash'); }, 540);
+  }
+
   function insertKey(text) {
     if (text === undefined || text === null) return;
     var el = targetInput();
     if (!el) return;
 
-    var focused = document.activeElement === el;
-    var s = focused ? (el.selectionStart || 0) : el.value.length;
-    var e = focused ? (el.selectionEnd || 0) : el.value.length;
+    var pos = caretIn(el);
     var val = el.value;
 
-    el.value = val.slice(0, s) + text + val.slice(e);
-    var pos = s + text.length;
+    el.value = val.slice(0, pos.start) + text + val.slice(pos.end);
+    var next = pos.start + text.length;
     el.focus();
-    el.setSelectionRange(pos, pos);
+    el.setSelectionRange(next, next);
     el.dispatchEvent(new Event('input', { bubbles: true }));
+    pendingCaret = { el: el, start: next, end: next };
+    flash(el);
   }
 
   function backspaceKey() {
     var el = targetInput();
     if (!el) return;
 
-    var focused = document.activeElement === el;
-    var s = focused ? (el.selectionStart || 0) : el.value.length;
-    var e = focused ? (el.selectionEnd || 0) : el.value.length;
+    var pos = caretIn(el);
+    var s = pos.start;
+    var e = pos.end;
     if (s === e) {
       if (s <= 0) return;
       s -= 1;
@@ -550,13 +566,21 @@
     el.focus();
     el.setSelectionRange(s, s);
     el.dispatchEvent(new Event('input', { bubbles: true }));
+    pendingCaret = { el: el, start: s, end: s };
+    flash(el);
   }
 
   var kbdEl = document.getElementById('kbd');
   if (kbdEl) {
-    /* 别让按钮抢走输入框的光标 */
+    /* 按下时先记住光标位置，松开后按钮会抢走焦点 */
     kbdEl.addEventListener('pointerdown', function (e) {
-      if (e.target.closest('button')) e.preventDefault();
+      var btn = e.target.closest('button');
+      var el = targetInput();
+      if (btn && el && document.activeElement === el) {
+        pendingCaret = { el: el, start: el.selectionStart || 0, end: el.selectionEnd || 0 };
+      } else {
+        pendingCaret = null;
+      }
     });
     kbdEl.addEventListener('click', function (e) {
       var btn = e.target.closest('button');
