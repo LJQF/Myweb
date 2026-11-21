@@ -1,4 +1,4 @@
-﻿/* ==========================================================================
+/* ==========================================================================
    plotter.js —— 函数绘图器
    ========================================================================== */
 (function () {
@@ -630,17 +630,30 @@
     var head = '<thead><tr><th>函数</th><th>最大值</th><th>最小值</th></tr></thead>';
     var body = '<tbody>';
 
-    funcs.forEach(function (f, i) {
+    funcs.forEach(function (f) {
       if (!f.compiled) return;
 
-      var info = analysis.items[i];
+      /* 全局最值只在表达式变化时算一次 */
+      if (!f.extremes || f.extremeKey !== f.expr) {
+        f.extremes = window.PlotExtremes ? window.PlotExtremes.compute(f.compiled) : null;
+        f.extremeKey = f.expr;
+      }
+
       var name = (f.expr || '').trim() || '函数';
       if (name.length > 16) name = name.slice(0, 15) + '…';
 
+      var ext = f.extremes;
+      var maxText = '—';
+      var minText = '—';
+      if (ext) {
+        maxText = ext.maxInf ? '+∞' : (isFinite(ext.max) ? fmtCell(ext.max) : '—');
+        minText = ext.minInf ? '−∞' : (isFinite(ext.min) ? fmtCell(ext.min) : '—');
+      }
+
       body += '<tr>';
       body += '<td><span class="dot" style="background:' + f.color + '"></span>' + escapeHtml(name) + '</td>';
-      body += '<td>' + (info && isFinite(info.max) ? fmtCell(info.max) : '—') + '</td>';
-      body += '<td>' + (info && isFinite(info.min) ? fmtCell(info.min) : '—') + '</td>';
+      body += '<td>' + maxText + '</td>';
+      body += '<td>' + minText + '</td>';
       body += '</tr>';
     });
 
@@ -648,7 +661,7 @@
     table.innerHTML = head + body;
 
     var hint = document.getElementById('values-hint');
-    if (hint) hint.textContent = '当前视野内';
+    if (hint) hint.textContent = '整个定义域';
   }
 
   /* 吸附：找离鼠标最近的特殊点 */
