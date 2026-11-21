@@ -38,7 +38,7 @@
   var pressed = { up: false, down: false, left: false, right: false };
   var order = [];
 
-  var pred = { on: false, r: 0, c: 0, dir: 'down', cool: 0, lastStepAt: 0, pending: false };
+  var pred = { on: false, r: 0, c: 0, dir: 'down', cool: 0, lastStepAt: 0, pending: false, moveDir: null, queuedDir: null };
   var netIn = { count: 0, last: '' };
 
   /* ---------------- 公用 ---------------- */
@@ -294,9 +294,10 @@
         if (dir) me.queuedDir = dir;
       }
     } else if (mode === 'guest') {
-      pred.dir = dir || pred.dir;
+      if (dir) pred.dir = dir;
+      pred.moveDir = dir;
+      if (dir) pred.queuedDir = dir;
       if (room) room.send({ t: 'step', dir: dir });
-      if (dir && pred.on) tryPredStep(dir, true);
     }
   }
 
@@ -566,9 +567,14 @@
     }, SNAP_MS);
   }
 
-  /* 客人：本地预测走一格 */
-  function tryPredStep(dir, immediate) {
-    if (!pred.on || !view) return false;
+  /* 客人：本地预测，规则和引擎完全一致（同样的冷却、同样的按键缓冲） */
+  function stepMsOf() {
+    var me = view && view.players[myIndex];
+    return (me && me.stepMs) || 230;
+  }
+
+  function tryPredStep(dir) {
+    if (!view) return false;
     var d = B.DIRS[dir];
     if (!d) return false;
     var nr = pred.r + d.dr;
@@ -579,9 +585,6 @@
     pred.dir = dir;
     pred.lastStepAt = Date.now();
     pred.pending = true;
-    var me = view.players[myIndex];
-    pred.cool = me ? me.stepMs : 150;
-    if (!immediate) pred.cool = me ? me.stepMs : 150;
     return true;
   }
 
@@ -589,9 +592,14 @@
     if (!pred.on || !view) return;
 
     if (pred.cool > 0) pred.cool -= dt * 1000;
+    if (pred.cool > 0) return;
 
-    var dir = activeDir();
-    if (dir && pred.cool <= 0) tryPredStep(dir);
+    var dir = pred.moveDir || pred.queuedDir;
+    if (!dir) return;
+
+    if (tryPredStep(dir)) pred.cool = stepMsOf();
+    else pred.cool = 100;
+    pred.queuedDir = null;
   }
 
   function onNetData(msg) {
@@ -608,6 +616,9 @@
       pred.c = me.c;
       pred.cool = 0;
       pred.lastStepAt = 0;
+      pred.moveDir = null;
+      pred.queuedDir = null;
+      pred.pending = false;
       showGame();
       startLoop();
       return;
@@ -628,12 +639,17 @@
           var since = Date.now() - pred.lastStepAt;
           if (diff === 0) {
             pred.pending = false;
-          } else if (diff >= 2 || since > 1200 || (!pred.pending && since > 400)) {
-            /* 差两格以上、或者等太久没对上，就以服务器为准 */
+          } else if (diff >= 2) {
+            /* 真的跑偏了（差两格以上）才拉回来 */
             pred.r = self.r;
             pred.c = self.c;
             pred.dir = self.dir;
+            pred.cool = 0;
             pred.pending = false;
+          } else if (!pred.pending && !pred.moveDir && since > 800) {
+            /* 手已经松开、服务器还差一格：慢慢对齐，不动手就不该有偏差 */
+            pred.r = self.r;
+            pred.c = self.c;
           }
         }
       }
