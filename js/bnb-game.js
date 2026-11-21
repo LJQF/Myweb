@@ -1,5 +1,6 @@
 /* ==========================================================================
    bnb-game.js —— 泡泡堂：渲染 / 输入 / 单人 AI / 联机（房主权威）
+   移动：格子制，按一下跳一格，没有中间过渡
    ========================================================================== */
 (function () {
   'use strict';
@@ -22,8 +23,8 @@
   var ovDesc = document.getElementById('ov-desc');
 
   var mode = 'lobby';        /* lobby | solo | host | guest */
-  var game = null;           /* 单人/房主：真实模拟状态 */
-  var view = null;           /* 客人：本地渲染状态 */
+  var game = null;
+  var view = null;
   var myIndex = 0;
   var running = false;
   var lastT = 0;
@@ -32,14 +33,13 @@
 
   var room = null;
   var snapTimer = 0;
-  var inputTimer = 0;
 
-  var keys = { up: false, down: false, left: false, right: false };
-  var touch = { up: false, down: false, left: false, right: false };
+  /* 输入：记录按键顺序，最后按下的方向优先 */
+  var pressed = { up: false, down: false, left: false, right: false };
+  var order = [];
 
-  var pred = { on: false, x: 0, y: 0, dir: 'down' };
-  var netPrev = null;        /* 上一帧快照的玩家位置，用于插值 */
-  var netT = 0;
+  var pred = { on: false, r: 0, c: 0, dir: 'down', cool: 0, lastStepAt: 0 };
+  var netIn = { count: 0, last: '' };
 
   /* ---------------- 公用 ---------------- */
   function $(id) { return document.getElementById(id); }
@@ -63,15 +63,13 @@
 
   function key(r, c) { return r + ',' + c; }
 
-  /* ---------------- 画布尺寸 ---------------- */
+  /* ---------------- 画布 ---------------- */
   function resizeCanvas() {
     var rect = wrap.getBoundingClientRect();
     var dpr = Math.min(window.devicePixelRatio || 1, 2);
     canvas.width = Math.max(1, Math.round(rect.width * dpr));
     canvas.height = Math.max(1, Math.round(rect.height * dpr));
-    var sx = canvas.width / COLS;
-    var sy = canvas.height / ROWS;
-    ctx.setTransform(sx, 0, 0, sy, 0, 0);
+    ctx.setTransform(canvas.width / COLS, 0, 0, canvas.height / ROWS, 0, 0);
   }
 
   /* ---------------- 绘制 ---------------- */
@@ -88,7 +86,6 @@
   function drawBoard(st, now) {
     var r, c;
 
-    /* 草地 */
     for (r = 0; r < ROWS; r++) {
       for (c = 0; c < COLS; c++) {
         ctx.fillStyle = ((r + c) % 2 === 0) ? '#3f7a4a' : '#376e43';
@@ -96,7 +93,6 @@
       }
     }
 
-    /* 砖块 */
     for (r = 0; r < ROWS; r++) {
       for (c = 0; c < COLS; c++) {
         var t = st.tiles[r][c];
@@ -121,7 +117,6 @@
       }
     }
 
-    /* 道具 */
     (st.items || []).forEach(function (it) {
       var cx = it.c + 0.5, cy = it.r + 0.5;
       ctx.save();
@@ -148,7 +143,6 @@
       ctx.restore();
     });
 
-    /* 水泡 */
     (st.bombs || []).forEach(function (b) {
       var cx = b.c + 0.5;
       var cy = b.r + 0.5;
@@ -166,7 +160,6 @@
       ctx.restore();
     });
 
-    /* 水柱 */
     (st.blasts || []).forEach(function (x) {
       var cx = x.c + 0.5, cy = x.r + 0.5;
       var t = Math.min(1, Math.max(0, 1 - (x.ttl || 0) / B.BLAST_TTL));
@@ -181,23 +174,20 @@
       ctx.fill();
     });
 
-    /* 玩家 */
     st.players.forEach(function (p, idx) {
       if (!p.alive) return;
-      var x = p.x, y = p.y;
+      var x = p.c + 0.5;
+      var y = p.r + 0.5;
 
-      /* 影子 */
       ctx.fillStyle = 'rgba(0,0,0,.22)';
       ctx.beginPath();
       ctx.ellipse(x, y + 0.3, 0.3, 0.12, 0, 0, Math.PI * 2);
       ctx.fill();
 
-      /* 身体 */
       ctx.fillStyle = COLOR[idx] || '#3b82f6';
       roundRect(x - 0.3, y - 0.34, 0.6, 0.64, 0.26);
       ctx.fill();
 
-      /* 眼睛 */
       var ex = p.dir === 'left' ? -0.06 : p.dir === 'right' ? 0.06 : 0;
       var ey = p.dir === 'up' ? -0.06 : p.dir === 'down' ? 0.06 : 0;
       ctx.fillStyle = '#fff';
@@ -207,7 +197,6 @@
       ctx.beginPath(); ctx.arc(x - 0.11 + ex * 1.8, y - 0.06 + ey * 1.8, 0.04, 0, Math.PI * 2); ctx.fill();
       ctx.beginPath(); ctx.arc(x + 0.11 + ex * 1.8, y - 0.06 + ey * 1.8, 0.04, 0, Math.PI * 2); ctx.fill();
 
-      /* 我是谁 */
       if (p.id === myIndex && mode !== 'solo') {
         ctx.strokeStyle = 'rgba(255,255,255,.9)';
         ctx.lineWidth = 0.05;
@@ -222,47 +211,57 @@
     var st = (mode === 'guest') ? view : game;
     if (!st) return;
 
-    if (mode === 'guest' && netPrev) {
-      /* 在两次快照之间做插值，顺便用本地预测覆盖自己 */
-      var alpha = Math.min(1, netT / (SNAP_MS / 1000));
-      var saved = [];
-      st.players.forEach(function (p, i) {
-        saved.push({ x: p.x, y: p.y, dir: p.dir });
-        var prev = netPrev[i];
-        if (prev) {
-          p.x = prev.x + (p.x - prev.x) * alpha;
-          p.y = prev.y + (p.y - prev.y) * alpha;
-        }
-      });
-      if (pred.on && st.players[myIndex]) {
-        st.players[myIndex].x = pred.x;
-        st.players[myIndex].y = pred.y;
-        st.players[myIndex].dir = pred.dir;
-      }
+    if (mode === 'guest' && pred.on && st.players[myIndex]) {
+      var me = st.players[myIndex];
+      var sr = me.r, sc = me.c, sd = me.dir;
+      me.r = pred.r; me.c = pred.c; me.dir = pred.dir;
       drawBoard(st, now);
-      st.players.forEach(function (p, i) {
-        p.x = saved[i].x; p.y = saved[i].y; p.dir = saved[i].dir;
-      });
+      me.r = sr; me.c = sc; me.dir = sd;
     } else {
       drawBoard(st, now);
     }
   }
 
   /* ---------------- 输入 ---------------- */
-  function currentDirs() {
-    return {
-      up: keys.up || touch.up,
-      down: keys.down || touch.down,
-      left: keys.left || touch.left,
-      right: keys.right || touch.right
-    };
+  var KEYMAP = {
+    arrowup: 'up', arrowdown: 'down', arrowleft: 'left', arrowright: 'right',
+    w: 'up', s: 'down', a: 'left', d: 'right'
+  };
+
+  function activeDir() {
+    for (var i = order.length - 1; i >= 0; i--) {
+      if (pressed[order[i]]) return order[i];
+    }
+    return null;
   }
 
-  function dirVector(d) {
-    return {
-      dx: (d.right ? 1 : 0) - (d.left ? 1 : 0),
-      dy: (d.down ? 1 : 0) - (d.up ? 1 : 0)
-    };
+  function pushDir(dir) {
+    if (!pressed[dir]) {
+      pressed[dir] = true;
+      order.push(dir);
+    }
+    applyInput();
+  }
+
+  function releaseDir(dir) {
+    pressed[dir] = false;
+    var i = order.indexOf(dir);
+    if (i >= 0) order.splice(i, 1);
+    applyInput();
+  }
+
+  function applyInput() {
+    var dir = activeDir();
+    if (!running) return;
+
+    if (mode === 'solo' || mode === 'host') {
+      var me = game && game.players[myIndex];
+      if (me) me.moveDir = dir;
+    } else if (mode === 'guest') {
+      pred.dir = dir || pred.dir;
+      if (room) room.send({ t: 'step', dir: dir });
+      if (dir && pred.on) tryPredStep(dir, true);
+    }
   }
 
   function pushBomb() {
@@ -274,11 +273,6 @@
     }
   }
 
-  var KEYMAP = {
-    arrowup: 'up', arrowdown: 'down', arrowleft: 'left', arrowright: 'right',
-    w: 'up', s: 'down', a: 'left', d: 'right'
-  };
-
   window.addEventListener('keydown', function (e) {
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     var k = String(e.key).toLowerCase();
@@ -288,50 +282,42 @@
     var dir = KEYMAP[k];
     if (!dir) return;
     e.preventDefault();
-    keys[dir] = true;
-    if (mode === 'guest' && running) sendGuestInput();
+    if (e.repeat) return;          /* 长按的重复事件不重复触发 */
+    pushDir(dir);
   });
 
   window.addEventListener('keyup', function (e) {
     var dir = KEYMAP[String(e.key).toLowerCase()];
     if (!dir) return;
-    keys[dir] = false;
-    if (mode === 'guest' && running) sendGuestInput();
+    releaseDir(dir);
+  });
+
+  window.addEventListener('blur', function () {
+    ['up', 'down', 'left', 'right'].forEach(function (d) { releaseDir(d); });
   });
 
   /* 手机方向键 */
   (function bindPad() {
     var pad = document.querySelector('.pad');
     if (!pad) return;
-    function setDir(el, val) {
-      var d = el.getAttribute('data-dir');
-      if (!d) return;
-      touch[d] = val;
-      if (mode === 'guest' && running) sendGuestInput();
-    }
     pad.addEventListener('pointerdown', function (e) {
       var btn = e.target.closest('button');
       if (!btn) return;
       e.preventDefault();
       if (btn.dataset.act === 'bomb') { pushBomb(); return; }
-      setDir(btn, true);
+      if (btn.dataset.dir) pushDir(btn.dataset.dir);
     });
-    pad.addEventListener('pointerup', function (e) {
+    function up(e) {
       var btn = e.target.closest('button');
-      if (btn) setDir(btn, false);
-    });
-    pad.addEventListener('pointercancel', function (e) {
-      var btn = e.target.closest('button');
-      if (btn) setDir(btn, false);
-    });
-    pad.addEventListener('pointerleave', function (e) {
-      var btn = e.target.closest('button');
-      if (btn) setDir(btn, false);
-    });
+      if (btn && btn.dataset.dir) releaseDir(btn.dataset.dir);
+    }
+    pad.addEventListener('pointerup', up);
+    pad.addEventListener('pointercancel', up);
+    pad.addEventListener('pointerleave', up);
   }());
 
   /* ---------------- 单人 AI ---------------- */
-  var ai = { timer: 0, dir: null };
+  var ai = { timer: 0 };
 
   function blastCells(st, bomb) {
     var cells = [key(bomb.r, bomb.c)];
@@ -362,41 +348,25 @@
     if (!p || !p.alive) return;
 
     ai.timer -= dt;
-    if (ai.timer > 0) {
-      p.input.dx = ai.dir ? ai.dir[0] : 0;
-      p.input.dy = ai.dir ? ai.dir[1] : 0;
-      return;
-    }
+    if (ai.timer > 0) return;
     ai.timer = 0.1;
 
-    var tr = Math.floor(p.y), tc = Math.floor(p.x);
-    var dirs = [[0, -1], [0, 1], [-1, 0], [1, 0]];
-    var options = [];
-    for (var i = 0; i < 4; i++) {
-      var nr = tr + dirs[i][1], nc = tc + dirs[i][0];
-      if (B.isSolid(st, nr, nc)) continue;
-      options.push({ dc: dirs[i][0], dr: dirs[i][1], k: key(nr, nc), r: nr, c: nc });
-    }
-    if (!options.length) {
-      ai.dir = null;
-      p.input.dx = 0; p.input.dy = 0;
-      return;
-    }
-
-    function move(dir) {
-      ai.dir = dir;
-      p.input.dx = dir ? dir[0] : 0;
-      p.input.dy = dir ? dir[1] : 0;
-    }
-
     var danger = dangerSet(st);
+    var dirs = ['up', 'down', 'left', 'right'];
+    var options = [];
+    for (var i = 0; i < dirs.length; i++) {
+      var d = B.DIRS[dirs[i]];
+      var nr = p.r + d.dr, nc = p.c + d.dc;
+      if (B.isSolid(st, nr, nc)) continue;
+      options.push({ dir: dirs[i], r: nr, c: nc, k: key(nr, nc) });
+    }
+    if (!options.length) { p.moveDir = null; return; }
 
-    /* 1. 站在危险区：往离水泡最远的安全格跑 */
-    if (danger[key(tr, tc)]) {
+    /* 1. 危险：往离水泡最远的安全格跑 */
+    if (danger[key(p.r, p.c)]) {
       var safe = options.filter(function (o) { return !danger[o.k]; });
       if (!safe.length) safe = options;
-      var bestFlee = safe[0];
-      var bestFleeD = -1;
+      var bestFlee = safe[0], bestFleeD = -1;
       for (var f = 0; f < safe.length; f++) {
         var md = 99;
         for (var bi = 0; bi < st.bombs.length; bi++) {
@@ -405,42 +375,38 @@
         }
         if (md > bestFleeD) { bestFleeD = md; bestFlee = safe[f]; }
       }
-      move([bestFlee.dc, bestFlee.dr]);
+      p.moveDir = bestFlee.dir;
       return;
     }
 
-    /* 2. 贴着箱子：先确认炸完以后有路跑，再放 */
+    /* 2. 贴着箱子：确认炸完有路跑再放 */
     var crateNext = options.filter(function (o) { return st.tiles[o.r][o.c] === B.CRATE; });
     if (crateNext.length && st.bombs.length === 0) {
       var danger2 = {};
-      Object.keys(danger).forEach(function (k) { danger2[k] = true; });
-      blastCells(st, { r: tr, c: tc, power: p.power }).forEach(function (k) { danger2[k] = true; });
-
+      Object.keys(danger).forEach(function (k2) { danger2[k2] = true; });
+      blastCells(st, { r: p.r, c: p.c, power: p.power }).forEach(function (k3) { danger2[k3] = true; });
       var escapes = options.filter(function (o) { return !danger2[o.k]; });
       if (escapes.length) {
         p.bombQueued = true;
-        var away = escapes[Math.floor(Math.random() * escapes.length)];
-        move([away.dc, away.dr]);
+        p.moveDir = escapes[Math.floor(Math.random() * escapes.length)].dir;
         return;
       }
     }
 
     /* 3. 朝最近的箱子或对手走 */
     var opp = st.players[0];
-    var goalR = Math.floor(opp.y), goalC = Math.floor(opp.x);
     var bestCrate = null, bestD = 1e9;
     for (var r = 1; r < st.rows - 1; r++) {
       for (var c = 1; c < st.cols - 1; c++) {
         if (st.tiles[r][c] !== B.CRATE) continue;
-        var d = Math.abs(r - tr) + Math.abs(c - tc);
-        if (d < bestD) { bestD = d; bestCrate = { r: r, c: c }; }
+        var dd = Math.abs(r - p.r) + Math.abs(c - p.c);
+        if (dd < bestD) { bestD = dd; bestCrate = { r: r, c: c }; }
       }
     }
-    var oppD = Math.abs(goalR - tr) + Math.abs(goalC - tc);
-    var goal = (bestCrate && bestD <= oppD) ? bestCrate : { r: goalR, c: goalC };
+    var oppD = Math.abs(opp.r - p.r) + Math.abs(opp.c - p.c);
+    var goal = (bestCrate && bestD <= oppD) ? bestCrate : { r: opp.r, c: opp.c };
 
-    var best = options[0];
-    var bestScore = -1e9;
+    var best = options[0], bestScore = -1e9;
     for (var j = 0; j < options.length; j++) {
       var o = options[j];
       if (danger[o.k]) continue;
@@ -448,23 +414,13 @@
       var score = -dist + Math.random() * 0.4;
       if (score > bestScore) { bestScore = score; best = o; }
     }
-    move([best.dc, best.dr]);
+    p.moveDir = best.dir;
   }
 
   /* ---------------- 主循环 ---------------- */
   function stepGame(dt) {
-    var d = currentDirs();
-    var v = dirVector(d);
-    var me = game.players[myIndex];
-    if (me) {
-      me.input.dx = v.dx;
-      me.input.dy = v.dy;
-    }
-
     if (mode === 'solo') updateAI(game, dt);
-
     B.step(game, dt);
-
     if (game.over && running) {
       running = false;
       finish(game.winner);
@@ -487,10 +443,8 @@
         stepGame(1 / 60);
         if (!running) break;
       }
-      if (mode === 'host' && running) hostTick(dt);
     } else if (mode === 'guest') {
-      netT += dt;
-      guestPredict(dt);
+      guestTick(dt);
     }
 
     render(now);
@@ -556,9 +510,7 @@
   /* ---------------- 联机 ---------------- */
   function closeRoom() {
     window.clearInterval(snapTimer);
-    window.clearInterval(inputTimer);
     snapTimer = 0;
-    inputTimer = 0;
     if (room) { room.close(); room = null; }
   }
 
@@ -573,41 +525,36 @@
 
     window.clearInterval(snapTimer);
     snapTimer = window.setInterval(function () {
-      if (!room || !game) return;
-      room.send(B.snapshot(game));
+      if (room && game) room.send(B.snapshot(game));
     }, SNAP_MS);
   }
 
-  function hostTick() {
-    /* 输入由 onData 实时更新，这里不用做事 */
+  /* 客人：本地预测走一格 */
+  function tryPredStep(dir, immediate) {
+    if (!pred.on || !view) return false;
+    var d = B.DIRS[dir];
+    if (!d) return false;
+    var nr = pred.r + d.dr;
+    var nc = pred.c + d.dc;
+    if (B.isSolid(view, nr, nc)) return false;
+    pred.r = nr;
+    pred.c = nc;
+    pred.dir = dir;
+    pred.lastStepAt = Date.now();
+    var me = view.players[myIndex];
+    pred.cool = me ? me.stepMs : 150;
+    if (!immediate) pred.cool = me ? me.stepMs : 150;
+    return true;
   }
 
-  function guestPredict(dt) {
+  function guestTick(dt) {
     if (!pred.on || !view) return;
 
-    var d = currentDirs();
-    var v = dirVector(d);
-    if (!v.dx && !v.dy) return;
+    if (pred.cool > 0) pred.cool -= dt * 1000;
 
-    var speed = (view.players[myIndex] && view.players[myIndex].speed) || 3.4;
-    var dist = speed * dt;
-    var nx = pred.x + v.dx * dist;
-    var ny = pred.y + v.dy * dist;
-
-    if (v.dx) pred.dir = v.dx > 0 ? 'right' : 'left';
-    else if (v.dy) pred.dir = v.dy > 0 ? 'down' : 'up';
-
-    if (!B.blocked(view, nx, pred.y)) pred.x = nx;
-    if (!B.blocked(view, pred.x, ny)) pred.y = ny;
+    var dir = activeDir();
+    if (dir && pred.cool <= 0) tryPredStep(dir);
   }
-
-  function sendGuestInput() {
-    if (!room || mode !== 'guest' || !running) return;
-    var v = dirVector(currentDirs());
-    room.send({ t: 'in', dx: v.dx, dy: v.dy });
-  }
-
-  var netIn = { count: 0, last: '' };
 
   function onNetData(msg) {
     if (!msg || !msg.t) return;
@@ -617,30 +564,35 @@
     if (msg.t === 'start' && mode === 'guest') {
       myIndex = 1;
       view = buildGame(msg.tiles, msg.seed);
+      var me = view.players[1];
       pred.on = true;
-      pred.x = view.players[1].x;
-      pred.y = view.players[1].y;
-      netPrev = null;
+      pred.r = me.r;
+      pred.c = me.c;
+      pred.cool = 0;
+      pred.lastStepAt = 0;
       showGame();
       startLoop();
-      sendGuestInput();
       return;
     }
 
     if (msg.t === 'st' && mode === 'guest' && view) {
-      netPrev = view.players.map(function (p) { return { x: p.x, y: p.y }; });
       B.restore(view, msg);
-      netT = 0;
-
-      var me = view.players[myIndex];
-      if (me) {
-        if (!me.alive) { pred.on = false; }
-        else if (!pred.on) { pred.on = true; pred.x = me.x; pred.y = me.y; }
-        else {
-          var dx = me.x - pred.x;
-          var dy = me.y - pred.y;
-          if (Math.abs(dx) + Math.abs(dy) > 1.2) { pred.x = me.x; pred.y = me.y; }
-          else { pred.x += dx * 0.25; pred.y += dy * 0.25; }
+      var self = view.players[myIndex];
+      if (self) {
+        if (!self.alive) {
+          pred.on = false;
+        } else if (!pred.on) {
+          pred.on = true;
+          pred.r = self.r;
+          pred.c = self.c;
+        } else {
+          var diff = Math.abs(self.r - pred.r) + Math.abs(self.c - pred.c);
+          var since = Date.now() - pred.lastStepAt;
+          if (diff >= 2 || since > 320) {
+            pred.r = self.r;
+            pred.c = self.c;
+            pred.dir = self.dir;
+          }
         }
       }
 
@@ -651,9 +603,8 @@
       return;
     }
 
-    if (msg.t === 'in' && mode === 'host' && game && game.players[1]) {
-      game.players[1].input.dx = msg.dx || 0;
-      game.players[1].input.dy = msg.dy || 0;
+    if (msg.t === 'step' && mode === 'host' && game && game.players[1]) {
+      game.players[1].moveDir = msg.dir || null;
       return;
     }
 
@@ -776,6 +727,8 @@
     game = null;
     view = null;
     pred.on = false;
+    order.length = 0;
+    pressed.up = pressed.down = pressed.left = pressed.right = false;
     overlay.hidden = true;
     showView('lobby');
   }
@@ -806,17 +759,16 @@
     mode: function () { return mode; },
     net: function () { return netIn; },
     running: function () { return running; },
-    pred: function () { return { on: pred.on, x: Number(pred.x.toFixed(2)), y: Number(pred.y.toFixed(2)) }; },
     ticks: function () { return tick; },
+    pred: function () { return { on: pred.on, r: pred.r, c: pred.c }; },
     players: function () {
       var st = (mode === 'guest') ? view : game;
       if (!st) return null;
       return st.players.map(function (p) {
-        return { x: Number(p.x.toFixed(2)), y: Number(p.y.toFixed(2)), dx: p.input.dx, dy: p.input.dy, alive: p.alive };
+        return { r: p.r, c: p.c, dir: p.dir, alive: p.alive, moveDir: p.moveDir };
       });
     }
   };
 
-  /* 启动 */
   showView('lobby');
 }());

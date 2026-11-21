@@ -1,6 +1,9 @@
-﻿/* ==========================================================================
+/* ==========================================================================
    engine-bnb.js —— 泡泡堂（BNB）游戏逻辑，纯数据，不依赖 DOM
-   坐标：tile 为单位，(x, y) 表示列/行；格子中心 = (c + 0.5, r + 0.5)
+
+   移动模型：格子制
+     玩家永远站在某一格的正中（r, c），按键 = 走一格，没有中间过渡。
+     cooldown 控制连续按键（按住）时的节奏。
    ========================================================================== */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) module.exports = factory();
@@ -12,16 +15,22 @@
   var WALL = 1;
   var CRATE = 2;
 
-  var FUSE = 2600;        /* 水泡多久爆炸（毫秒） */
-  var BLAST_TTL = 420;    /* 水柱存在时间 */
-  var RADIUS = 0.32;      /* 玩家碰撞半径（tile） */
-  var BASE_SPEED = 3.4;   /* tile/秒 */
+  var FUSE = 2600;          /* 水泡多久爆炸（毫秒） */
+  var BLAST_TTL = 420;      /* 水柱存在时间 */
+  var STEP_MS = 150;        /* 默认走一格的时间 */
+  var STEP_MS_MIN = 75;     /* 吃了速度道具最快多少 */
+  var STEP_BLOCKED_MS = 80; /* 撞墙后多久再试 */
+
   var MAX_POWER = 6;
   var MAX_BOMBS = 5;
-  var MAX_SPEED = 5.4;
-  var WIN_SCORE = 1;
 
-  /* 确定性随机数（同一个种子结果一样，方便联机） */
+  var DIRS = {
+    up: { dr: -1, dc: 0 },
+    down: { dr: 1, dc: 0 },
+    left: { dr: 0, dc: -1 },
+    right: { dr: 0, dc: 1 }
+  };
+
   function makeRng(seed) {
     var s = seed >>> 0 || 1;
     return function () {
@@ -45,13 +54,10 @@
       tiles.push(row);
     }
 
-    /* 出生点周围留空 */
     var safe = {};
     spawns.forEach(function (sp) {
       for (var dr = -1; dr <= 1; dr++) {
-        for (var dc = -1; dc <= 1; dc++) {
-          safe[(sp.r + dr) + ',' + (sp.c + dc)] = true;
-        }
+        for (var dc = -1; dc <= 1; dc++) safe[(sp.r + dr) + ',' + (sp.c + dc)] = true;
       }
     });
 
@@ -62,7 +68,6 @@
         if (rng() < 0.62) tiles[r][c] = CRATE;
       }
     }
-
     return tiles;
   }
 
@@ -72,11 +77,10 @@
     var rows = opts.rows || 11;
     var seed = opts.seed || Math.floor(Math.random() * 1e9);
 
-    var spawns = [
+    var spawns = opts.spawns || [
       { r: 1, c: 1 },
       { r: rows - 2, c: cols - 2 }
     ];
-    if (opts.spawns) spawns = opts.spawns;
 
     var tiles = opts.tiles || buildMap(cols, rows, makeRng(seed), spawns);
 
@@ -86,17 +90,16 @@
       players.push({
         id: i,
         name: names[i] || ('玩家' + (i + 1)),
-        x: spawns[i].c + 0.5,
-        y: spawns[i].r + 0.5,
+        r: spawns[i].r,
+        c: spawns[i].c,
         dir: i === 0 ? 'down' : 'up',
         alive: true,
         maxBombs: 1,
         power: 2,
-        speed: BASE_SPEED,
-        input: { dx: 0, dy: 0 },
-        bombQueued: false,
-        hitAt: 0,
-        anim: 0
+        stepMs: STEP_MS,
+        cooldown: 0,
+        moveDir: null,
+        bombQueued: false
       });
     }
 
@@ -108,8 +111,8 @@
       tiles: tiles,
       players: players,
       bombs: [],
-      blasts: [],      /* {r, c, ttl} */
-      items: [],       /* {r, c, type} */
+      blasts: [],
+      items: [],
       time: 0,
       over: false,
       winner: -1,
@@ -123,49 +126,6 @@
     return t === WALL || t === CRATE;
   }
 
-  function tileAt(state, x, y) {
-    return { r: Math.floor(y), c: Math.floor(x) };
-  }
-
-  /* 圆形近似的 AABB 碰撞：四个角 + 四边中点 */
-  function blocked(state, x, y) {
-    var pts = [
-      [x - RADIUS, y - RADIUS], [x + RADIUS, y - RADIUS],
-      [x - RADIUS, y + RADIUS], [x + RADIUS, y + RADIUS],
-      [x, y - RADIUS], [x, y + RADIUS],
-      [x - RADIUS, y], [x + RADIUS, y]
-    ];
-    for (var i = 0; i < pts.length; i++) {
-      var r = Math.floor(pts[i][1]);
-      var c = Math.floor(pts[i][0]);
-      if (isSolid(state, r, c)) return true;
-    }
-    return false;
-  }
-
-  function movePlayer(state, p, dt) {
-    if (!p.alive) return;
-
-    var ix = p.input.dx;
-    var iy = p.input.dy;
-    if (ix && iy) { var norm = Math.SQRT1_2; ix *= norm; iy *= norm; }
-
-    if (ix) p.dir = ix > 0 ? 'right' : 'left';
-    else if (iy) p.dir = iy > 0 ? 'down' : 'up';
-
-    var dist = p.speed * dt;
-    if (ix) {
-      var nx = p.x + ix * dist;
-      if (!blocked(state, nx, p.y)) p.x = nx;
-    }
-    if (iy) {
-      var ny = p.y + iy * dist;
-      if (!blocked(state, p.x, ny)) p.y = ny;
-    }
-
-    if (ix || iy) p.anim += dt * 6;
-  }
-
   function bombAt(state, r, c) {
     for (var i = 0; i < state.bombs.length; i++) {
       if (state.bombs[i].r === r && state.bombs[i].c === c) return state.bombs[i];
@@ -173,11 +133,23 @@
     return null;
   }
 
+  /* 走一格（dir 为 'up'/'down'/'left'/'right'），返回是否真的走了 */
+  function tryStep(state, p, dir) {
+    var d = DIRS[dir];
+    if (!d) return false;
+    p.dir = dir;
+    var nr = p.r + d.dr;
+    var nc = p.c + d.dc;
+    if (isSolid(state, nr, nc)) return false;
+    p.r = nr;
+    p.c = nc;
+    return true;
+  }
+
   function placeBomb(state, p) {
     if (!p.alive) return false;
-    var t = tileAt(state, p.x, p.y);
-    if (isSolid(state, t.r, t.c)) return false;
-    if (bombAt(state, t.r, t.c)) return false;
+    if (isSolid(state, p.r, p.c)) return false;
+    if (bombAt(state, p.r, p.c)) return false;
 
     var mine = 0;
     for (var i = 0; i < state.bombs.length; i++) {
@@ -185,15 +157,13 @@
     }
     if (mine >= p.maxBombs) return false;
 
-    state.bombs.push({
-      r: t.r, c: t.c, owner: p.id, timer: FUSE, power: p.power
-    });
+    state.bombs.push({ r: p.r, c: p.c, owner: p.id, timer: FUSE, power: p.power });
     return true;
   }
 
   function detonate(state, bomb) {
     var idx = state.bombs.indexOf(bomb);
-    if (idx < 0) return;                 /* 连锁时可能已经被炸掉了 */
+    if (idx < 0) return;
     state.bombs.splice(idx, 1);
 
     var cells = [{ r: bomb.r, c: bomb.c }];
@@ -210,7 +180,6 @@
         if (t === CRATE) {
           state.tiles[r][c] = EMPTY;
           cells.push({ r: r, c: c });
-          /* 箱子里的道具 */
           if (Math.random() < 0.34) {
             var types = ['bomb', 'power', 'speed'];
             state.items.push({
@@ -223,12 +192,10 @@
       }
     }
 
-    /* 水柱 */
     cells.forEach(function (cell) {
       state.blasts.push({ r: cell.r, c: cell.c, ttl: BLAST_TTL });
     });
 
-    /* 引爆范围内的其他水泡（连爆） */
     var chained = [];
     for (var i = 0; i < state.bombs.length; i++) {
       var b = state.bombs[i];
@@ -240,21 +207,19 @@
   }
 
   function inBlast(state, p) {
-    var t = tileAt(state, p.x, p.y);
     for (var i = 0; i < state.blasts.length; i++) {
-      if (state.blasts[i].r === t.r && state.blasts[i].c === t.c) return true;
+      if (state.blasts[i].r === p.r && state.blasts[i].c === p.c) return true;
     }
     return false;
   }
 
   function pickupItems(state, p) {
-    var t = tileAt(state, p.x, p.y);
     for (var i = state.items.length - 1; i >= 0; i--) {
       var it = state.items[i];
-      if (it.r !== t.r || it.c !== t.c) continue;
+      if (it.r !== p.r || it.c !== p.c) continue;
       if (it.type === 'bomb') p.maxBombs = Math.min(MAX_BOMBS, p.maxBombs + 1);
       else if (it.type === 'power') p.power = Math.min(MAX_POWER, p.power + 1);
-      else if (it.type === 'speed') p.speed = Math.min(MAX_SPEED, p.speed + 0.55);
+      else if (it.type === 'speed') p.stepMs = Math.max(STEP_MS_MIN, Math.round(p.stepMs * 0.72));
       state.items.splice(i, 1);
       state.events.push({ t: 'pick', player: p.id, type: it.type });
     }
@@ -266,43 +231,52 @@
     return n;
   }
 
-  /* 推进一帧，dt 单位秒 */
   function step(state, dt) {
     if (state.over) return;
 
     state.time += dt;
     state.events.length = 0;
+    var ms = dt * 1000;
 
     for (var i = 0; i < state.players.length; i++) {
       var p = state.players[i];
+      if (!p.alive) continue;
+
+      if (p.cooldown > 0) p.cooldown -= ms;
+
       if (p.bombQueued) {
         p.bombQueued = false;
         placeBomb(state, p);
+        p.cooldown = Math.max(p.cooldown, 60);   /* 放完稍微顿一下，手感更清楚 */
       }
-      movePlayer(state, p, dt);
+
+      if (p.moveDir && p.cooldown <= 0) {
+        if (tryStep(state, p, p.moveDir)) p.cooldown = p.stepMs;
+        else p.cooldown = STEP_BLOCKED_MS;
+      }
     }
 
-    /* 水泡计时（先收集再统一引爆，避免边遍历边改数组） */
+    /* 水泡计时 */
     var due = [];
     for (var bi = 0; bi < state.bombs.length; bi++) {
-      state.bombs[bi].timer -= dt * 1000;
+      state.bombs[bi].timer -= ms;
       if (state.bombs[bi].timer <= 0) due.push(state.bombs[bi]);
     }
     due.forEach(function (bd) { detonate(state, bd); });
 
     /* 水柱消失 */
     for (var k = state.blasts.length - 1; k >= 0; k--) {
-      state.blasts[k].ttl -= dt * 1000;
+      state.blasts[k].ttl -= ms;
       if (state.blasts[k].ttl <= 0) state.blasts.splice(k, 1);
     }
 
-    /* 判定死亡 / 捡道具 */
+    /* 死亡 / 捡道具 */
     for (var j = 0; j < state.players.length; j++) {
       var pl = state.players[j];
       if (!pl.alive) continue;
       if (inBlast(state, pl)) {
         pl.alive = false;
-        pl.hitAt = state.time;
+        pl.moveDir = null;
         state.events.push({ t: 'die', player: pl.id });
       } else {
         pickupItems(state, pl);
@@ -340,8 +314,7 @@
       rs: Number(state.time.toFixed(2)),
       m: encodeTiles(state),
       p: state.players.map(function (p) {
-        return [Number(p.x.toFixed(2)), Number(p.y.toFixed(2)), p.dir,
-          p.alive ? 1 : 0, p.maxBombs, p.power, Number(p.speed.toFixed(2))];
+        return [p.r, p.c, p.dir, p.alive ? 1 : 0, p.maxBombs, p.power, p.stepMs];
       }),
       b: state.bombs.map(function (b) { return [b.r, b.c, Math.round(b.timer)]; }),
       f: state.blasts.map(function (b) { return [b.r, b.c]; }),
@@ -356,8 +329,8 @@
     for (var i = 0; i < state.players.length && i < snap.p.length; i++) {
       var s = snap.p[i];
       var p = state.players[i];
-      p.x = s[0]; p.y = s[1]; p.dir = s[2]; p.alive = !!s[3];
-      p.maxBombs = s[4]; p.power = s[5]; p.speed = s[6];
+      p.r = s[0]; p.c = s[1]; p.dir = s[2]; p.alive = !!s[3];
+      p.maxBombs = s[4]; p.power = s[5]; p.stepMs = s[6];
     }
     state.bombs = snap.b.map(function (b) { return { r: b[0], c: b[1], timer: b[2], owner: -1, power: 2 }; });
     state.blasts = snap.f.map(function (b) { return { r: b[0], c: b[1], ttl: BLAST_TTL }; });
@@ -370,14 +343,15 @@
 
   return {
     EMPTY: EMPTY, WALL: WALL, CRATE: CRATE,
-    FUSE: FUSE, BLAST_TTL: BLAST_TTL, RADIUS: RADIUS,
+    FUSE: FUSE, BLAST_TTL: BLAST_TTL,
+    STEP_MS: STEP_MS, DIRS: DIRS,
     create: create,
     step: step,
-    blocked: blocked,
+    isSolid: isSolid,
+    tryStep: tryStep,
     placeBomb: placeBomb,
     snapshot: snapshot,
     restore: restore,
-    aliveCount: aliveCount,
-    isSolid: isSolid
+    aliveCount: aliveCount
   };
 }));
