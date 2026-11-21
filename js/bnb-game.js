@@ -412,6 +412,7 @@
       if (danger[o.k]) continue;
       var dist = Math.abs(o.r - goal.r) + Math.abs(o.c - goal.c);
       var score = -dist + Math.random() * 0.4;
+      if (o.dir === p.moveDir) score += 0.5;   /* 别在两个格子之间来回抖 */
       if (score > bestScore) { bestScore = score; best = o; }
     }
     p.moveDir = best.dir;
