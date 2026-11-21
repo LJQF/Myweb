@@ -44,6 +44,8 @@
   /* 输入 */
   var pressed = { up: false, down: false, left: false, right: false };
   var order = [];
+  var dirDownAt = { up: 0, down: 0, left: 0, right: 0 };
+  var REPEAT_DELAY_MS = 420;   /* 按住多久之后才开始连走 */
 
   function $(id) { return document.getElementById(id); }
   function isPeer() { return mode === 'host' || mode === 'guest'; }
@@ -266,20 +268,28 @@
     if (!running || !game) return;
     var me = game.players[myIndex];
     if (!me || !me.alive) return;
+
     var dir = activeDir();
-    if (dir) me.queuedDir = dir;
+    if (!dir) return;
+    if (!dirDownAt[dir]) return;
+
+    /* 刚按下去的这一下只走一格；持续按住超过 REPEAT_DELAY_MS 才开始连走 */
+    if (Date.now() - dirDownAt[dir] < REPEAT_DELAY_MS) return;
+    me.queuedDir = dir;
   }
 
   function pushDir(dir) {
     if (!pressed[dir]) {
       pressed[dir] = true;
       order.push(dir);
+      dirDownAt[dir] = Date.now();
     }
     applyInput();
   }
 
   function releaseDir(dir) {
     pressed[dir] = false;
+    dirDownAt[dir] = 0;
     var i = order.indexOf(dir);
     if (i >= 0) order.splice(i, 1);
     applyInput();
@@ -582,6 +592,7 @@
     anim = {};
     order.length = 0;
     pressed.up = pressed.down = pressed.left = pressed.right = false;
+    dirDownAt.up = dirDownAt.down = dirDownAt.left = dirDownAt.right = 0;
   }
 
   /* ---------------- 联机消息 ---------------- */
