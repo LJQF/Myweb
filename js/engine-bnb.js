@@ -17,9 +17,9 @@
 
   var FUSE = 2600;          /* 水泡多久爆炸（毫秒） */
   var BLAST_TTL = 420;      /* 水柱存在时间 */
-  var STEP_MS = 150;        /* 默认走一格的时间 */
-  var STEP_MS_MIN = 75;     /* 吃了速度道具最快多少 */
-  var STEP_BLOCKED_MS = 80; /* 撞墙后多久再试 */
+  var STEP_MS = 230;        /* 默认走一格的时间 */
+  var STEP_MS_MIN = 120;    /* 吃了速度道具最快多少 */
+  var STEP_BLOCKED_MS = 100; /* 撞墙后多久再试 */
 
   var MAX_POWER = 6;
   var MAX_BOMBS = 5;

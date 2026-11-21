@@ -73,6 +73,47 @@
   }
 
   /* ---------------- 绘制 ---------------- */
+
+  /* 格子之间跳一下的过渡动画：逻辑位置永远是整格，只是画的时候平滑过去 */
+  var ANIM_MS = 150;
+  var anim = {};
+
+  function playerSource(p) {
+    if (mode === 'guest' && pred.on && p.id === myIndex) {
+      return { r: pred.r, c: pred.c };
+    }
+    return { r: p.r, c: p.c };
+  }
+
+  function visualPos(p, now) {
+    var src = playerSource(p);
+    var a = anim[p.id];
+
+    if (!a) {
+      anim[p.id] = { r: src.r, c: src.c, fromR: src.r, fromC: src.c, t0: -1 };
+      return { r: src.r, c: src.c };
+    }
+
+    if (a.r !== src.r || a.c !== src.c) {
+      a.fromR = a.r;
+      a.fromC = a.c;
+      a.r = src.r;
+      a.c = src.c;
+      a.t0 = now;
+    }
+
+    if (a.t0 < 0) return { r: a.r, c: a.c };
+
+    var t = (now - a.t0) / ANIM_MS;
+    if (t >= 1) { a.t0 = -1; return { r: a.r, c: a.c }; }
+
+    var e = 1 - Math.pow(1 - t, 3);      /* ease-out */
+    return {
+      r: a.fromR + (a.r - a.fromR) * e,
+      c: a.fromC + (a.c - a.fromC) * e
+    };
+  }
+
   function roundRect(x, y, w, h, r) {
     ctx.beginPath();
     ctx.moveTo(x + r, y);
@@ -176,8 +217,9 @@
 
     st.players.forEach(function (p, idx) {
       if (!p.alive) return;
-      var x = p.c + 0.5;
-      var y = p.r + 0.5;
+      var vis = visualPos(p, now);
+      var x = vis.c + 0.5;
+      var y = vis.r + 0.5;
 
       ctx.fillStyle = 'rgba(0,0,0,.22)';
       ctx.beginPath();
@@ -210,16 +252,7 @@
   function render(now) {
     var st = (mode === 'guest') ? view : game;
     if (!st) return;
-
-    if (mode === 'guest' && pred.on && st.players[myIndex]) {
-      var me = st.players[myIndex];
-      var sr = me.r, sc = me.c, sd = me.dir;
-      me.r = pred.r; me.c = pred.c; me.dir = pred.dir;
-      drawBoard(st, now);
-      me.r = sr; me.c = sc; me.dir = sd;
-    } else {
-      drawBoard(st, now);
-    }
+    drawBoard(st, now);
   }
 
   /* ---------------- 输入 ---------------- */
