@@ -31,6 +31,15 @@
     right: { dr: 0, dc: 1 }
   };
 
+  /* 格子哈希：同样的格子 + 同样的种子 → 同样的结果，保证双方一致 */
+  function hashCell(r, c, seed) {
+    var h = (r * 73856093) ^ (c * 19349663) ^ (seed * 83492791);
+    h = h >>> 0;
+    h ^= h >>> 13;
+    h = Math.imul(h, 1274126177) >>> 0;
+    return (h % 100000) / 100000;
+  }
+
   function makeRng(seed) {
     var s = seed >>> 0 || 1;
     return function () {
@@ -98,6 +107,7 @@
         power: 2,
         stepMs: STEP_MS,
         cooldown: 0,
+        immune: false,
         moveDir: null,
         queuedDir: null,
         bombQueued: false
@@ -117,6 +127,7 @@
       time: 0,
       over: false,
       winner: -1,
+      peerMode: !!opts.peerMode,
       events: []
     };
   }
@@ -181,10 +192,10 @@
         if (t === CRATE) {
           state.tiles[r][c] = EMPTY;
           cells.push({ r: r, c: c });
-          if (Math.random() < 0.34) {
+          if (hashCell(r, c, state.seed) < 0.34) {
             var types = ['bomb', 'power', 'speed'];
             state.items.push({
-              r: r, c: c, type: types[Math.floor(Math.random() * types.length)]
+              r: r, c: c, type: types[Math.floor(hashCell(c, r, state.seed + 7) * 3) % 3]
             });
           }
           break;
@@ -251,14 +262,14 @@
         p.cooldown = Math.max(p.cooldown, 60);   /* 放完稍微顿一下，手感更清楚 */
       }
 
-      /* moveDir：按住的方向；queuedDir：按过一下（哪怕已经松手）也要走这一步 */
-      if (p.cooldown <= 0) {
-        var dir = p.moveDir || p.queuedDir;
-        if (dir) {
-          if (tryStep(state, p, dir)) p.cooldown = p.stepMs;
-          else p.cooldown = STEP_BLOCKED_MS;
-          p.queuedDir = null;
-        }
+      /* 只认「走一格」的请求（queuedDir）。
+         请求一直挂着，等冷却结束就执行；执行/撞墙后清掉。
+         人按住键时由界面每帧重新投递，AI 每次决策重新投递。 */
+      if (p.cooldown <= 0 && p.queuedDir) {
+        var dir = p.queuedDir;
+        p.queuedDir = null;
+        if (tryStep(state, p, dir)) p.cooldown = p.stepMs;
+        else p.cooldown = STEP_BLOCKED_MS;
       }
     }
 
@@ -280,6 +291,7 @@
     for (var j = 0; j < state.players.length; j++) {
       var pl = state.players[j];
       if (!pl.alive) continue;
+      if (pl.immune) { pickupItems(state, pl); continue; }
       if (inBlast(state, pl)) {
         pl.alive = false;
         pl.moveDir = null;
@@ -289,7 +301,7 @@
       }
     }
 
-    if (aliveCount(state) <= 1 && !state.over) {
+    if (!state.peerMode && aliveCount(state) <= 1 && !state.over) {
       state.over = true;
       for (var w = 0; w < state.players.length; w++) {
         if (state.players[w].alive) { state.winner = w; break; }

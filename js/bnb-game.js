@@ -1,6 +1,11 @@
 /* ==========================================================================
-   bnb-game.js —— 泡泡堂：渲染 / 输入 / 单人 AI / 联机（房主权威）
-   移动：格子制，按一下跳一格，没有中间过渡
+   bnb-game.js —— 泡泡堂：渲染 / 输入 / 单人 AI / 联机
+
+   联机采用「各自管好自己」的方式（对方不管我的死活，我也只管自己的）：
+     · 我在本地跑一整套游戏逻辑，我的角色一按就走，零延迟
+     · 对手的角色完全由他发来的坐标驱动，我只负责画出来
+     · 水泡互相广播，双方各自演算爆炸；箱子里的道具用格子哈希生成，两边必然一致
+     · 我被炸死由我自己判定，然后广播「我死了」；对方死了我收到通知
    ========================================================================== */
 (function () {
   'use strict';
@@ -11,7 +16,7 @@
   var COLS = 13;
   var ROWS = 11;
   var PREFIX = 'bnb-';
-  var SNAP_MS = 66;          /* 房主每 66ms 发一次快照 ≈ 15Hz */
+  var POS_HB_MS = 700;       /* 位置心跳，防止丢包后对手卡住 */
   var COLOR = ['#3b82f6', '#ef4444'];
   var NAME = ['你', '对手'];
 
@@ -24,7 +29,6 @@
 
   var mode = 'lobby';        /* lobby | solo | host | guest */
   var game = null;
-  var view = null;
   var myIndex = 0;
   var running = false;
   var lastT = 0;
@@ -32,17 +36,17 @@
   var tick = 0;
 
   var room = null;
-  var snapTimer = 0;
+  var lastSentPos = '';
+  var lastHeartbeat = 0;
+  var sentDead = false;
+  var netIn = { count: 0, last: '' };
 
-  /* 输入：记录按键顺序，最后按下的方向优先 */
+  /* 输入 */
   var pressed = { up: false, down: false, left: false, right: false };
   var order = [];
 
-  var pred = { on: false, r: 0, c: 0, dir: 'down', cool: 0, lastStepAt: 0, pending: false, moveDir: null, queuedDir: null };
-  var netIn = { count: 0, last: '' };
-
-  /* ---------------- 公用 ---------------- */
   function $(id) { return document.getElementById(id); }
+  function isPeer() { return mode === 'host' || mode === 'guest'; }
 
   function showView(name) {
     $('view-lobby').hidden = name !== 'lobby';
@@ -61,8 +65,6 @@
     toastTimer = window.setTimeout(function () { el.hidden = true; }, 2200);
   }
 
-  function key(r, c) { return r + ',' + c; }
-
   /* ---------------- 画布 ---------------- */
   function resizeCanvas() {
     var rect = wrap.getBoundingClientRect();
@@ -73,41 +75,24 @@
   }
 
   /* ---------------- 绘制 ---------------- */
-
-  /* 格子之间跳一下的过渡动画：逻辑位置永远是整格，只是画的时候平滑过去 */
   var ANIM_MS = 150;
   var anim = {};
 
-  function playerSource(p) {
-    if (mode === 'guest' && pred.on && p.id === myIndex) {
-      return { r: pred.r, c: pred.c };
-    }
-    return { r: p.r, c: p.c };
-  }
-
   function visualPos(p, now) {
-    var src = playerSource(p);
     var a = anim[p.id];
-
     if (!a) {
-      anim[p.id] = { r: src.r, c: src.c, fromR: src.r, fromC: src.c, t0: -1 };
-      return { r: src.r, c: src.c };
+      anim[p.id] = { r: p.r, c: p.c, fromR: p.r, fromC: p.c, t0: -1 };
+      return { r: p.r, c: p.c };
     }
-
-    if (a.r !== src.r || a.c !== src.c) {
-      a.fromR = a.r;
-      a.fromC = a.c;
-      a.r = src.r;
-      a.c = src.c;
+    if (a.r !== p.r || a.c !== p.c) {
+      a.fromR = a.r; a.fromC = a.c;
+      a.r = p.r; a.c = p.c;
       a.t0 = now;
     }
-
     if (a.t0 < 0) return { r: a.r, c: a.c };
-
     var t = (now - a.t0) / ANIM_MS;
     if (t >= 1) { a.t0 = -1; return { r: a.r, c: a.c }; }
-
-    var e = 1 - Math.pow(1 - t, 3);      /* ease-out */
+    var e = 1 - Math.pow(1 - t, 3);
     return {
       r: a.fromR + (a.r - a.fromR) * e,
       c: a.fromC + (a.c - a.fromC) * e
@@ -250,9 +235,8 @@
   }
 
   function render(now) {
-    var st = (mode === 'guest') ? view : game;
-    if (!st) return;
-    drawBoard(st, now);
+    if (!game) return;
+    drawBoard(game, now);
   }
 
   /* ---------------- 输入 ---------------- */
@@ -266,6 +250,24 @@
       if (pressed[order[i]]) return order[i];
     }
     return null;
+  }
+
+  /* 按键状态每次变化时立刻投递一次；按住的话由主循环每帧补投 */
+  function applyInput() {
+    if (!running || !game) return;
+    var me = game.players[myIndex];
+    if (!me) return;
+    var dir = activeDir();
+    me.moveDir = dir;
+    if (dir) me.queuedDir = dir;
+  }
+
+  function sampleInput() {
+    if (!running || !game) return;
+    var me = game.players[myIndex];
+    if (!me || !me.alive) return;
+    var dir = activeDir();
+    if (dir) me.queuedDir = dir;
   }
 
   function pushDir(dir) {
@@ -283,43 +285,20 @@
     applyInput();
   }
 
-  function applyInput() {
-    var dir = activeDir();
-    if (!running) return;
-
-    if (mode === 'solo' || mode === 'host') {
-      var me = game && game.players[myIndex];
-      if (me) {
-        me.moveDir = dir;
-        if (dir) me.queuedDir = dir;
-      }
-    } else if (mode === 'guest') {
-      if (dir) pred.dir = dir;
-      pred.moveDir = dir;
-      if (dir) pred.queuedDir = dir;
-      if (room) room.send({ t: 'step', dir: dir });
-    }
-  }
-
   function pushBomb() {
-    if (!running) return;
-    if (mode === 'solo' || mode === 'host') {
-      if (game && game.players[myIndex]) game.players[myIndex].bombQueued = true;
-    } else if (mode === 'guest' && room) {
-      room.send({ t: 'bomb' });
-    }
+    if (!running || !game) return;
+    var me = game.players[myIndex];
+    if (me) me.bombQueued = true;
   }
 
   window.addEventListener('keydown', function (e) {
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     var k = String(e.key).toLowerCase();
-
     if (k === ' ') { e.preventDefault(); pushBomb(); return; }
-
     var dir = KEYMAP[k];
     if (!dir) return;
     e.preventDefault();
-    if (e.repeat) return;          /* 长按的重复事件不重复触发 */
+    if (e.repeat) return;
     pushDir(dir);
   });
 
@@ -333,7 +312,6 @@
     ['up', 'down', 'left', 'right'].forEach(function (d) { releaseDir(d); });
   });
 
-  /* 手机方向键 */
   (function bindPad() {
     var pad = document.querySelector('.pad');
     if (!pad) return;
@@ -357,7 +335,7 @@
   var ai = { timer: 0 };
 
   function blastCells(st, bomb) {
-    var cells = [key(bomb.r, bomb.c)];
+    var cells = [bomb.r + ',' + bomb.c];
     var dirs = [[-1, 0], [1, 0], [0, -1], [0, 1]];
     for (var d = 0; d < 4; d++) {
       for (var k = 1; k <= bomb.power; k++) {
@@ -365,7 +343,7 @@
         var c = bomb.c + dirs[d][1] * k;
         if (r < 0 || c < 0 || r >= st.rows || c >= st.cols) break;
         if (st.tiles[r][c] === B.WALL) break;
-        cells.push(key(r, c));
+        cells.push(r + ',' + c);
         if (st.tiles[r][c] === B.CRATE) break;
       }
     }
@@ -395,12 +373,11 @@
       var d = B.DIRS[dirs[i]];
       var nr = p.r + d.dr, nc = p.c + d.dc;
       if (B.isSolid(st, nr, nc)) continue;
-      options.push({ dir: dirs[i], r: nr, c: nc, k: key(nr, nc) });
+      options.push({ dir: dirs[i], r: nr, c: nc, k: nr + ',' + nc });
     }
     if (!options.length) { p.moveDir = null; return; }
 
-    /* 1. 危险：往离水泡最远的安全格跑 */
-    if (danger[key(p.r, p.c)]) {
+    if (danger[p.r + ',' + p.c]) {
       var safe = options.filter(function (o) { return !danger[o.k]; });
       if (!safe.length) safe = options;
       var bestFlee = safe[0], bestFleeD = -1;
@@ -413,10 +390,10 @@
         if (md > bestFleeD) { bestFleeD = md; bestFlee = safe[f]; }
       }
       p.moveDir = bestFlee.dir;
+      p.queuedDir = bestFlee.dir;
       return;
     }
 
-    /* 2. 贴着箱子：确认炸完有路跑再放 */
     var crateNext = options.filter(function (o) { return st.tiles[o.r][o.c] === B.CRATE; });
     if (crateNext.length && st.bombs.length === 0) {
       var danger2 = {};
@@ -425,12 +402,13 @@
       var escapes = options.filter(function (o) { return !danger2[o.k]; });
       if (escapes.length) {
         p.bombQueued = true;
-        p.moveDir = escapes[Math.floor(Math.random() * escapes.length)].dir;
+        var escDir = escapes[Math.floor(Math.random() * escapes.length)].dir;
+        p.moveDir = escDir;
+        p.queuedDir = escDir;
         return;
       }
     }
 
-    /* 3. 朝最近的箱子或对手走 */
     var opp = st.players[0];
     var bestCrate = null, bestD = 1e9;
     for (var r = 1; r < st.rows - 1; r++) {
@@ -449,16 +427,57 @@
       if (danger[o.k]) continue;
       var dist = Math.abs(o.r - goal.r) + Math.abs(o.c - goal.c);
       var score = -dist + Math.random() * 0.4;
-      if (o.dir === p.moveDir) score += 0.5;   /* 别在两个格子之间来回抖 */
+      if (o.dir === p.moveDir) score += 0.5;
       if (score > bestScore) { bestScore = score; best = o; }
     }
     p.moveDir = best.dir;
+    p.queuedDir = best.dir;
+  }
+
+  /* ---------------- 联机同步 ---------------- */
+  function sendPos(force) {
+    if (!room || !game) return;
+    var me = game.players[myIndex];
+    if (!me) return;
+    var sig = me.r + ',' + me.c + ',' + me.dir + ',' + (me.alive ? 1 : 0);
+    var now = Date.now();
+    if (!force && sig === lastSentPos && now - lastHeartbeat < POS_HB_MS) return;
+    lastSentPos = sig;
+    if (force) lastHeartbeat = now;
+    else if (now - lastHeartbeat > POS_HB_MS) lastHeartbeat = now;
+    room.send({ t: 'pos', r: me.r, c: me.c, dir: me.dir });
+  }
+
+  function sendNewBombs() {
+    if (!room || !game) return;
+    for (var i = 0; i < game.bombs.length; i++) {
+      var b = game.bombs[i];
+      if (b.owner !== myIndex || b.sent) continue;
+      b.sent = true;
+      room.send({ t: 'bomb', r: b.r, c: b.c, power: b.power });
+    }
   }
 
   /* ---------------- 主循环 ---------------- */
   function stepGame(dt) {
-    if (mode === 'solo') updateAI(game, dt);
+    if (mode !== 'solo') sampleInput(); else updateAI(game, dt);
+
     B.step(game, dt);
+
+    if (isPeer()) {
+      sendNewBombs();
+      sendPos(false);
+
+      var me = game.players[myIndex];
+      if (me && !me.alive && !sentDead) {
+        sentDead = true;
+        if (room) room.send({ t: 'dead' });
+        running = false;
+        finish(1 - myIndex);
+        return;
+      }
+    }
+
     if (game.over && running) {
       running = false;
       finish(game.winner);
@@ -473,16 +492,12 @@
     var dt = Math.min(0.05, (now - lastT) / 1000);
     lastT = now;
 
-    if (mode === 'solo' || mode === 'host') {
-      acc += dt;
-      var guard = 0;
-      while (acc >= 1 / 60 && guard++ < 6) {
-        acc -= 1 / 60;
-        stepGame(1 / 60);
-        if (!running) break;
-      }
-    } else if (mode === 'guest') {
-      guestTick(dt);
+    acc += dt;
+    var guard = 0;
+    while (acc >= 1 / 60 && guard++ < 6) {
+      acc -= 1 / 60;
+      stepGame(1 / 60);
+      if (!running) break;
     }
 
     render(now);
@@ -507,8 +522,23 @@
   }
 
   /* ---------------- 开局 ---------------- */
-  function buildGame(tilesStr, seed) {
-    var g = B.create({ cols: COLS, rows: ROWS, seed: seed, names: NAME });
+  function showGame() {
+    showView('game');
+    overlay.hidden = true;
+    $('dot-a').style.background = COLOR[0];
+    $('dot-b').style.background = COLOR[1];
+    $('name-a').textContent = (myIndex === 0) ? '你' : '对手';
+    $('name-b').textContent = (myIndex === 0) ? (mode === 'solo' ? '电脑' : '对手') : '你';
+    $('hud-mid').textContent = COLS + ' × ' + ROWS;
+    resizeCanvas();
+  }
+
+  function newGame(tilesStr, seed, peer) {
+    var g = B.create({
+      cols: COLS, rows: ROWS, seed: seed || Math.floor(Math.random() * 1e9),
+      names: peer ? ['房主', '加入者'] : ['你', '电脑'],
+      peerMode: !!peer
+    });
     if (tilesStr) {
       for (var r = 0; r < ROWS; r++) {
         for (var c = 0; c < COLS; c++) {
@@ -525,81 +555,38 @@
     return s;
   }
 
-  function showGame() {
-    showView('game');
-    overlay.hidden = true;
-    $('dot-a').style.background = COLOR[0];
-    $('dot-b').style.background = COLOR[1];
-    $('name-a').textContent = (mode === 'solo' || myIndex === 0) ? '你' : '对手';
-    $('name-b').textContent = (mode === 'solo') ? '电脑' : (myIndex === 1 ? '你' : '对手');
-    $('hud-mid').textContent = COLS + ' × ' + ROWS;
-    resizeCanvas();
-  }
-
   function startSolo() {
     closeRoom();
     mode = 'solo';
     myIndex = 0;
-    game = B.create({ cols: COLS, rows: ROWS, names: ['你', '电脑'] });
+    game = newGame(null, null, false);
+    resetSync();
     showGame();
     startLoop();
   }
 
-  /* ---------------- 联机 ---------------- */
+  function startPeer(tilesStr, seed, asHost) {
+    mode = asHost ? 'host' : 'guest';
+    myIndex = asHost ? 0 : 1;
+    game = newGame(tilesStr, seed, true);
+    game.players[1 - myIndex].immune = true;   /* 对手的死活由他自己判定 */
+    resetSync();
+    showGame();
+    startLoop();
+  }
+
+  function resetSync() {
+    lastSentPos = '';
+    lastHeartbeat = 0;
+    sentDead = false;
+    anim = {};
+    order.length = 0;
+    pressed.up = pressed.down = pressed.left = pressed.right = false;
+  }
+
+  /* ---------------- 联机消息 ---------------- */
   function closeRoom() {
-    window.clearInterval(snapTimer);
-    snapTimer = 0;
     if (room) { room.close(); room = null; }
-  }
-
-  function hostStartMatch() {
-    myIndex = 0;
-    game = B.create({ cols: COLS, rows: ROWS, names: ['房主', '加入者'] });
-    mode = 'host';
-    showGame();
-    startLoop();
-
-    room.send({ t: 'start', tiles: encodeTiles(game), seed: game.seed });
-
-    window.clearInterval(snapTimer);
-    snapTimer = window.setInterval(function () {
-      if (room && game) room.send(B.snapshot(game));
-    }, SNAP_MS);
-  }
-
-  /* 客人：本地预测，规则和引擎完全一致（同样的冷却、同样的按键缓冲） */
-  function stepMsOf() {
-    var me = view && view.players[myIndex];
-    return (me && me.stepMs) || 230;
-  }
-
-  function tryPredStep(dir) {
-    if (!view) return false;
-    var d = B.DIRS[dir];
-    if (!d) return false;
-    var nr = pred.r + d.dr;
-    var nc = pred.c + d.dc;
-    if (B.isSolid(view, nr, nc)) return false;
-    pred.r = nr;
-    pred.c = nc;
-    pred.dir = dir;
-    pred.lastStepAt = Date.now();
-    pred.pending = true;
-    return true;
-  }
-
-  function guestTick(dt) {
-    if (!pred.on || !view) return;
-
-    if (pred.cool > 0) pred.cool -= dt * 1000;
-    if (pred.cool > 0) return;
-
-    var dir = pred.moveDir || pred.queuedDir;
-    if (!dir) return;
-
-    if (tryPredStep(dir)) pred.cool = stepMsOf();
-    else pred.cool = 100;
-    pred.queuedDir = null;
   }
 
   function onNetData(msg) {
@@ -608,73 +595,44 @@
     netIn.last = msg.t;
 
     if (msg.t === 'start' && mode === 'guest') {
-      myIndex = 1;
-      view = buildGame(msg.tiles, msg.seed);
-      var me = view.players[1];
-      pred.on = true;
-      pred.r = me.r;
-      pred.c = me.c;
-      pred.cool = 0;
-      pred.lastStepAt = 0;
-      pred.moveDir = null;
-      pred.queuedDir = null;
-      pred.pending = false;
-      showGame();
-      startLoop();
+      startPeer(msg.tiles, msg.seed, false);
       return;
     }
 
-    if (msg.t === 'st' && mode === 'guest' && view) {
-      B.restore(view, msg);
-      var self = view.players[myIndex];
-      if (self) {
-        if (!self.alive) {
-          pred.on = false;
-        } else if (!pred.on) {
-          pred.on = true;
-          pred.r = self.r;
-          pred.c = self.c;
-        } else {
-          var diff = Math.abs(self.r - pred.r) + Math.abs(self.c - pred.c);
-          var since = Date.now() - pred.lastStepAt;
-          if (diff === 0) {
-            pred.pending = false;
-          } else if (diff >= 2) {
-            /* 真的跑偏了（差两格以上）才拉回来 */
-            pred.r = self.r;
-            pred.c = self.c;
-            pred.dir = self.dir;
-            pred.cool = 0;
-            pred.pending = false;
-          } else if (!pred.pending && !pred.moveDir && since > 800) {
-            /* 手已经松开、服务器还差一格：慢慢对齐，不动手就不该有偏差 */
-            pred.r = self.r;
-            pred.c = self.c;
-          }
-        }
-      }
+    if (!game) return;
+    var other = game.players[1 - myIndex];
 
-      if (view.over && running) {
-        running = false;
-        finish(view.winner);
-      }
+    if (msg.t === 'pos' && other) {
+      other.r = msg.r;
+      other.c = msg.c;
+      other.dir = msg.dir || other.dir;
       return;
     }
 
-    if (msg.t === 'step' && mode === 'host' && game && game.players[1]) {
-      var p1 = game.players[1];
-      p1.moveDir = msg.dir || null;
-      if (msg.dir) p1.queuedDir = msg.dir;
+    if (msg.t === 'bomb') {
+      game.bombs.push({
+        r: msg.r, c: msg.c, owner: 1 - myIndex, timer: B.FUSE,
+        power: msg.power || 2, sent: true
+      });
       return;
     }
 
-    if (msg.t === 'bomb' && mode === 'host' && game && game.players[1]) {
-      game.players[1].bombQueued = true;
+    if (msg.t === 'dead') {
+      if (other) { other.alive = false; other.moveDir = null; }
+      if (running) { running = false; finish(myIndex); }
       return;
     }
 
     if (msg.t === 'again' && mode === 'host') {
-      hostStartMatch();
+      var g = newGame(null, Math.floor(Math.random() * 1e9), true);
+      if (room) room.send({ t: 'start', tiles: encodeTiles(g), seed: g.seed });
+      mode = 'host';
+      myIndex = 0;
+      game = g;
+      game.players[1].immune = true;
+      resetSync();
+      showGame();
+      startLoop();
       return;
     }
 
@@ -689,7 +647,7 @@
   }
 
   function onPeerLeft() {
-    if (mode !== 'host' && mode !== 'guest') return;
+    if (!isPeer()) return;
     running = false;
     ovTitle.textContent = '对手断开了';
     ovDesc.textContent = '可以回到大厅重新开一局';
@@ -712,7 +670,9 @@
           $('room-code').textContent = data.code;
           $('host-status').textContent = '等待对手加入…';
         } else if (name === 'connected') {
-          hostStartMatch();
+          var g = newGame(null, Math.floor(Math.random() * 1e9), true);
+          room.send({ t: 'start', tiles: encodeTiles(g), seed: g.seed });
+          startPeer(encodeTiles(g), g.seed, true);
         } else if (name === 'error') {
           $('host-status').textContent = data.message;
         } else if (name === 'peer-left') {
@@ -782,13 +742,11 @@
 
   function backToLobby() {
     running = false;
+    if (room) room.send({ t: 'bye' });
     closeRoom();
     mode = 'lobby';
     game = null;
-    view = null;
-    pred.on = false;
-    order.length = 0;
-    pressed.up = pressed.down = pressed.left = pressed.right = false;
+    resetSync();
     overlay.hidden = true;
     showView('lobby');
   }
@@ -801,8 +759,16 @@
   $('btn-again').addEventListener('click', function () {
     overlay.hidden = true;
     if (mode === 'solo') startSolo();
-    else if (mode === 'host') { if (room) room.send({ t: 'again' }); hostStartMatch(); }
-    else if (mode === 'guest') {
+    else if (mode === 'host') {
+      var g = newGame(null, Math.floor(Math.random() * 1e9), true);
+      if (room) room.send({ t: 'start', tiles: encodeTiles(g), seed: g.seed });
+      myIndex = 0;
+      game = g;
+      game.players[1].immune = true;
+      resetSync();
+      showGame();
+      startLoop();
+    } else if (mode === 'guest') {
       if (room) room.send({ t: 'again' });
       toast('等房主再开一局…');
     }
@@ -812,20 +778,19 @@
 
   /* 调试用：只读快照，方便自动化测试 */
   window.BnBDebug = {
-    snapshot: function () {
-      var st = (mode === 'guest') ? view : game;
-      return st ? B.snapshot(st) : null;
-    },
+    snapshot: function () { return game ? B.snapshot(game) : null; },
     mode: function () { return mode; },
     net: function () { return netIn; },
     running: function () { return running; },
     ticks: function () { return tick; },
-    pred: function () { return { on: pred.on, r: pred.r, c: pred.c }; },
+    me: function () { return myIndex; },
     players: function () {
-      var st = (mode === 'guest') ? view : game;
-      if (!st) return null;
-      return st.players.map(function (p) {
-        return { r: p.r, c: p.c, dir: p.dir, alive: p.alive, moveDir: p.moveDir };
+      if (!game) return null;
+      return game.players.map(function (p) {
+        return {
+          r: p.r, c: p.c, dir: p.dir, alive: p.alive,
+          moveDir: p.moveDir, immune: p.immune
+        };
       });
     }
   };
