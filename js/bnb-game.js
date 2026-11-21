@@ -470,7 +470,8 @@
 
   /* ---------------- 主循环 ---------------- */
   function stepGame(dt) {
-    if (mode !== 'solo') sampleInput(); else updateAI(game, dt);
+    sampleInput();                      /* 按住超过阈值才补投，实现「按住连走」 */
+    if (mode === 'solo') updateAI(game, dt);
 
     B.step(game, dt);
 
