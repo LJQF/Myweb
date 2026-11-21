@@ -99,6 +99,7 @@
         stepMs: STEP_MS,
         cooldown: 0,
         moveDir: null,
+        queuedDir: null,
         bombQueued: false
       });
     }
@@ -250,9 +251,14 @@
         p.cooldown = Math.max(p.cooldown, 60);   /* 放完稍微顿一下，手感更清楚 */
       }
 
-      if (p.moveDir && p.cooldown <= 0) {
-        if (tryStep(state, p, p.moveDir)) p.cooldown = p.stepMs;
-        else p.cooldown = STEP_BLOCKED_MS;
+      /* moveDir：按住的方向；queuedDir：按过一下（哪怕已经松手）也要走这一步 */
+      if (p.cooldown <= 0) {
+        var dir = p.moveDir || p.queuedDir;
+        if (dir) {
+          if (tryStep(state, p, dir)) p.cooldown = p.stepMs;
+          else p.cooldown = STEP_BLOCKED_MS;
+          p.queuedDir = null;
+        }
       }
     }
 

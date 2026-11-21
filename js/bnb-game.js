@@ -38,7 +38,7 @@
   var pressed = { up: false, down: false, left: false, right: false };
   var order = [];
 
-  var pred = { on: false, r: 0, c: 0, dir: 'down', cool: 0, lastStepAt: 0 };
+  var pred = { on: false, r: 0, c: 0, dir: 'down', cool: 0, lastStepAt: 0, pending: false };
   var netIn = { count: 0, last: '' };
 
   /* ---------------- 公用 ---------------- */
@@ -289,7 +289,10 @@
 
     if (mode === 'solo' || mode === 'host') {
       var me = game && game.players[myIndex];
-      if (me) me.moveDir = dir;
+      if (me) {
+        me.moveDir = dir;
+        if (dir) me.queuedDir = dir;
+      }
     } else if (mode === 'guest') {
       pred.dir = dir || pred.dir;
       if (room) room.send({ t: 'step', dir: dir });
@@ -575,6 +578,7 @@
     pred.c = nc;
     pred.dir = dir;
     pred.lastStepAt = Date.now();
+    pred.pending = true;
     var me = view.players[myIndex];
     pred.cool = me ? me.stepMs : 150;
     if (!immediate) pred.cool = me ? me.stepMs : 150;
@@ -622,10 +626,14 @@
         } else {
           var diff = Math.abs(self.r - pred.r) + Math.abs(self.c - pred.c);
           var since = Date.now() - pred.lastStepAt;
-          if (diff >= 2 || since > 320) {
+          if (diff === 0) {
+            pred.pending = false;
+          } else if (diff >= 2 || since > 1200 || (!pred.pending && since > 400)) {
+            /* 差两格以上、或者等太久没对上，就以服务器为准 */
             pred.r = self.r;
             pred.c = self.c;
             pred.dir = self.dir;
+            pred.pending = false;
           }
         }
       }
@@ -638,7 +646,9 @@
     }
 
     if (msg.t === 'step' && mode === 'host' && game && game.players[1]) {
-      game.players[1].moveDir = msg.dir || null;
+      var p1 = game.players[1];
+      p1.moveDir = msg.dir || null;
+      if (msg.dir) p1.queuedDir = msg.dir;
       return;
     }
 
