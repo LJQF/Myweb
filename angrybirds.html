@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#f6f9fc" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0b1220" media="(prefers-color-scheme: dark)">
+<title>愤怒的小鸟 · 小站</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='34' r='20' fill='%23e11d48'/%3E%3Ccircle cx='25' cy='28' r='4' fill='%23fff'/%3E%3Cpath d='M44 34l10 4-10 4z' fill='%23f59e0b'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="css/site.css">
+<style>
+  .view { animation: fadein .28s ease-out both; }
+  @keyframes fadein { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+
+  .stage { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+
+  .hud {
+    width: min(96vw, 900px);
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    font-size: 13px; color: var(--muted); flex-wrap: wrap;
+  }
+  .hud .tag { display: inline-flex; align-items: center; gap: 6px; }
+  .hud .val { color: var(--ink); font-weight: 650; font-variant-numeric: tabular-nums; }
+
+  .birds-left { display: inline-flex; gap: 4px; }
+  .birds-left i {
+    width: 12px; height: 12px; border-radius: 50% 50% 50% 50% / 60% 60% 40% 40%;
+    background: #e11d48; box-shadow: inset -2px -2px 0 rgba(0,0,0,.18);
+  }
+  .birds-left i.used { background: color-mix(in srgb, var(--muted) 35%, transparent); box-shadow: none; }
+
+  .board-wrap {
+    position: relative;
+    width: min(96vw, 900px);
+    aspect-ratio: 16 / 9;
+    border-radius: 16px;
+    overflow: hidden;
+    background: #bfe4f5;
+    box-shadow: var(--shadow);
+    touch-action: none;
+  }
+  #board { display: block; width: 100%; height: 100%; }
+
+  .overlay {
+    position: absolute; inset: 0;
+    display: grid; place-items: center;
+    background: rgba(8, 15, 24, .55);
+    -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px);
+    z-index: 5; animation: fadein .25s ease-out both;
+  }
+  .overlay[hidden] { display: none; }
+  .ov-card { text-align: center; padding: 22px 26px; background: var(--surface-solid); border-radius: 18px; box-shadow: var(--shadow); max-width: 86vw; }
+  .ov-card h2 { margin: 0 0 6px; font-size: 24px; }
+  .ov-card p { margin: 0 0 14px; color: var(--muted); font-size: 13.5px; }
+  .stars { font-size: 30px; letter-spacing: 6px; margin: 0 0 12px; height: 34px; }
+  .stars span { opacity: .2; }
+  .stars span.on { opacity: 1; }
+  .ov-card .row { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+
+  .levels { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+  .lv-btn {
+    width: 44px; height: 40px; border-radius: 12px;
+    border: 1px solid var(--line); background: var(--surface);
+    color: var(--ink); font: 600 14px/1 inherit; cursor: pointer;
+    display: grid; place-items: center; gap: 0;
+  }
+  .lv-btn.on { border-color: var(--accent); color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  .lv-btn small { font-size: 9px; letter-spacing: 1px; opacity: .75; }
+
+  .actions { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
+  .hint { margin: 0; font-size: 12.5px; color: var(--muted); text-align: center; line-height: 1.8; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <a class="back" href="index.html">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg>
+      主菜单
+    </a>
+    <h2>愤怒的小鸟</h2>
+  </div>
+
+  <main>
+    <div class="stage">
+      <div class="hud">
+        <div class="tag"><span>关卡</span><span class="val" id="hud-level">第 1 关 · 小木屋</span></div>
+        <div class="tag"><span>小鸟</span><span class="birds-left" id="hud-birds"></span></div>
+        <div class="tag"><span>猪</span><span class="val" id="hud-pigs">0</span></div>
+        <div class="tag"><span>分数</span><span class="val" id="hud-score">0</span></div>
+      </div>
+
+      <div class="board-wrap" id="board-wrap">
+        <canvas id="board"></canvas>
+        <div class="overlay" id="overlay" hidden>
+          <div class="ov-card">
+            <h2 id="ov-title">过关！</h2>
+            <div class="stars" id="ov-stars"><span>★</span><span>★</span><span>★</span></div>
+            <p id="ov-desc"></p>
+            <div class="row">
+              <button class="btn btn-primary" id="btn-next" type="button">下一关</button>
+              <button class="btn" id="btn-retry" type="button">重玩</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="levels" id="levels"></div>
+
+      <div class="actions">
+        <button class="btn btn-ghost" id="btn-reset" type="button">重新开始本关</button>
+      </div>
+
+      <p class="hint">按住小鸟往后拉，松手发射 · 手机建议横屏</p>
+    </div>
+  </main>
+
+  <footer class="foot">木箱易碎 · 石头很硬 · 冰块一碰就碎 · 打掉所有猪就过关</footer>
+</div>
+
+<script src="js/vendor/matter.min.js"></script>
+<script src="js/birds-engine.js"></script>
+<script src="js/birds-levels.js"></script>
+<script src="js/angrybirds.js"></script>
+</body>
+</html>
