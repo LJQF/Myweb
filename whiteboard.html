@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#f6f9fc" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0b1220" media="(prefers-color-scheme: dark)">
+<title>白板 · 小站</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23f8fafc'/%3E%3Cpath d='M16 44l6-16 18-14 6 8-18 14z' fill='%233b82f6'/%3E%3Ccircle cx='18' cy='46' r='4' fill='%23ef4444'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="css/site.css">
+<style>
+  .view { animation: fadein .26s ease-out both; }
+  @keyframes fadein { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+
+  .wb { max-width: 1180px; margin: 0 auto; }
+
+  .bars {
+    display: flex; flex-direction: column; gap: 8px;
+    padding: 10px 12px; margin-bottom: 12px;
+    border-radius: 16px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    box-shadow: var(--shadow-sm);
+  }
+  .bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .sep { width: 1px; height: 22px; background: var(--line); margin: 0 2px; }
+  .lbl { font-size: 12px; color: var(--muted); margin-right: 2px; }
+
+  .tool {
+    display: inline-flex; align-items: center; gap: 6px;
+    height: 34px; padding: 0 11px; border-radius: 10px;
+    border: 1px solid var(--line); background: var(--surface-solid);
+    color: var(--ink); font: 500 13px/1 inherit; cursor: pointer;
+    white-space: nowrap;
+  }
+  .tool:hover { border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
+  .tool.on { border-color: var(--accent); color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  .tool.icon { width: 36px; padding: 0; justify-content: center; }
+  .tool svg { width: 17px; height: 17px; }
+
+  .swatches { display: flex; gap: 6px; }
+  .sw {
+    width: 24px; height: 24px; border-radius: 50%;
+    border: 2px solid transparent; cursor: pointer; padding: 0;
+    box-shadow: inset 0 0 0 1px rgba(0,0,0,.12);
+  }
+  .sw.on { border-color: var(--ink); box-shadow: 0 0 0 2px var(--surface-solid); }
+
+  .widths { display: flex; gap: 4px; align-items: center; }
+  .wd {
+    width: 30px; height: 30px; border-radius: 9px; border: 1px solid var(--line);
+    background: var(--surface-solid); cursor: pointer; display: grid; place-items: center; padding: 0;
+  }
+  .wd.on { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  .wd i { display: block; background: var(--ink); border-radius: 50%; }
+
+  .board-wrap {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    border-radius: 14px;
+    overflow: hidden;
+    background: #fff;
+    box-shadow: var(--shadow);
+    touch-action: none;
+  }
+  #board { display: block; width: 100%; height: 100%; cursor: crosshair; }
+
+  .board-wrap:fullscreen { border-radius: 0; display: flex; align-items: center; justify-content: center; background: #0f172a; }
+  .board-wrap:fullscreen #board { width: 100%; height: 100%; object-fit: contain; }
+
+  .text-input {
+    position: absolute; z-index: 6; min-width: 160px;
+    padding: 6px 8px; border-radius: 8px; border: 2px solid var(--accent);
+    background: #fff; color: #111827; font-size: 20px; outline: none;
+    box-shadow: 0 6px 24px rgba(0,0,0,.18);
+  }
+
+  .pages { display: inline-flex; align-items: center; gap: 6px; font-variant-numeric: tabular-nums; }
+  .pages b { min-width: 46px; text-align: center; font-weight: 600; }
+
+  .tip { margin: 10px 0 0; font-size: 12.5px; color: var(--muted); text-align: center; line-height: 1.8; }
+
+  @media (max-width: 720px) {
+    .tool { height: 32px; padding: 0 9px; font-size: 12px; }
+    .tool.icon { width: 32px; }
+    .sw { width: 22px; height: 22px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <a class="back" href="index.html">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg>
+      主菜单
+    </a>
+    <h2>白板</h2>
+  </div>
+
+  <main class="wb">
+    <div class="bars">
+      <div class="bar" id="bar-tools">
+        <span class="lbl">工具</span>
+        <button class="tool on" data-tool="pen" type="button">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>
+          笔
+        </button>
+        <button class="tool" data-tool="highlighter" type="button">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l-6 6v3h3l6-6"/><path d="M22 12l-4.5 4.5-6-6L16 6z"/></svg>
+          荧光笔
+        </button>
+        <button class="tool" data-tool="eraser" type="button">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 15l6-6 9 9-3 3H6z"/><path d="M9 9l6-6 9 9-6 6"/></svg>
+          橡皮
+        </button>
+        <span class="sep"></span>
+        <button class="tool" data-tool="line" type="button">直线</button>
+        <button class="tool" data-tool="arrow" type="button">箭头</button>
+        <button class="tool" data-tool="rect" type="button">矩形</button>
+        <button class="tool" data-tool="ellipse" type="button">圆形</button>
+        <button class="tool" data-tool="text" type="button">文字</button>
+      </div>
+
+      <div class="bar">
+        <span class="lbl">颜色</span>
+        <div class="swatches" id="swatches"></div>
+        <span class="sep"></span>
+        <span class="lbl">粗细</span>
+        <div class="widths" id="widths"></div>
+        <span class="sep"></span>
+        <span class="lbl">背景</span>
+        <button class="tool on" data-bg="none" type="button">空白</button>
+        <button class="tool" data-bg="grid" type="button">方格</button>
+        <button class="tool" data-bg="line" type="button">横线</button>
+      </div>
+
+      <div class="bar">
+        <button class="tool icon" id="btn-undo" type="button" title="撤销 (Ctrl+Z)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14L4 9l5-5"/><path d="M4 9h11a5 5 0 010 10h-3"/></svg>
+        </button>
+        <button class="tool icon" id="btn-redo" type="button" title="重做 (Ctrl+Y)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 14l5-5-5-5"/><path d="M20 9H9a5 5 0 000 10h3"/></svg>
+        </button>
+        <button class="tool" id="btn-clear" type="button">清空本页</button>
+        <span class="sep"></span>
+        <div class="pages">
+          <button class="tool icon" id="btn-prev" type="button" title="上一页">‹</button>
+          <b id="page-label">1 / 1</b>
+          <button class="tool icon" id="btn-next" type="button" title="下一页">›</button>
+        </div>
+        <button class="tool" id="btn-addpage" type="button">+ 新页</button>
+        <button class="tool" id="btn-delpage" type="button">删除本页</button>
+        <span class="sep"></span>
+        <button class="tool" id="btn-export" type="button">导出图片</button>
+        <button class="tool" id="btn-full" type="button">全屏</button>
+      </div>
+    </div>
+
+    <div class="board-wrap" id="board-wrap">
+      <canvas id="board"></canvas>
+    </div>
+
+    <p class="tip">鼠标 / 手指 / 手写笔都能写 · <b>Ctrl+Z</b> 撤销 · 内容会自动存在这台设备上</p>
+  </main>
+</div>
+
+<script src="js/whiteboard-model.js"></script>
+<script src="js/whiteboard.js"></script>
+</body>
+</html>
