@@ -6,7 +6,38 @@
   'use strict';
 
   var M = window.WBModel;
-  if (!M) return;
+  if (!M) {
+    showFatal('模型脚本没有加载成功，请按 <b>Ctrl + F5</b> 强制刷新');
+    return;
+  }
+
+  function showFatal(html) {
+    if (!document.body || document.getElementById('wb-fatal')) return;
+    var d = document.createElement('div');
+    d.id = 'wb-fatal';
+    d.style.cssText = 'position:fixed;inset:0;z-index:99999;display:grid;place-items:center;'
+      + 'background:#0b1220;color:#e5e7eb;font:15px/1.9 system-ui,sans-serif;text-align:center;padding:24px';
+    d.innerHTML = '<div><p style="font-size:17px;margin:0 0 10px">白板没能启动</p>'
+      + '<p style="color:#94a3b8;margin:0">' + html + '</p></div>';
+    document.body.appendChild(d);
+  }
+
+  /* 有些浏览器会缓存旧版 HTML、却拉到新版脚本 —— 自动带新参数重载一次，实在不行再提示 */
+  var required = ['board', 'desk', 'slide-area', 'thumbs', 'dock'];
+  var missing = required.filter(function (id) { return !document.getElementById(id); });
+  if (missing.length) {
+    if (location.search.indexOf('fix=') < 0) {
+      location.replace(location.pathname + '?fix=' + Date.now());
+      return;
+    }
+    showFatal('页面版本不一致（缺少 ' + missing.join('、') + '）。<br>请按 <b>Ctrl + F5</b> 强制刷新一次。');
+    return;
+  }
+
+  window.addEventListener('error', function (e) {
+    showFatal('脚本出错：' + (e && e.message ? e.message : '未知错误') + '<br>请按 <b>Ctrl + F5</b> 刷新');
+  });
+
 
   var canvas = document.getElementById('board');
   var ctx = canvas.getContext('2d');
